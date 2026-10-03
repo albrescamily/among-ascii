@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class NPCSystem:
     def __init__(self) -> None:
         self.meeting_vote_times: dict[str, float] = {}
-        self.greetings: set[tuple[str, int]] = set()
+        self.greetings: set[tuple[str, int, bool]] = set()
 
     def start_meeting(self, game: "Game") -> None:
         """Spread built-in decisions across the meeting, using the episode RNG."""
@@ -27,12 +27,12 @@ class NPCSystem:
             fraction = 0.15 + 0.60 * (index + game.rng.uniform(0.1, 0.9)) / len(voters)
             self.meeting_vote_times[actor_id] = game.meetings.duration * fraction
 
-    def greet(self, game: "Game") -> None:
-        """Greet once per voting session; gameplay chat is read-only."""
-        if not game.config.npc_ai_enabled or not game.pending_meeting:
+    def greet(self, game: "Game", *, meeting: bool = False) -> None:
+        """Greet once at the start and once per meeting."""
+        if not game.config.npc_ai_enabled:
             return
         for actor in game.npcs:
-            key = (actor.id, game.meeting_number)
+            key = (actor.id, game.meeting_number if meeting else -1, meeting)
             if actor.alive and key not in self.greetings:
                 if game.chat.send(game, actor.id, "Hello world"):
                     self.greetings.add(key)
@@ -107,6 +107,7 @@ class NPCSystem:
     def tick(self, game: "Game") -> None:
         if not game.config.npc_ai_enabled:
             return
+        self.greet(game)
         for actor in game.npcs:
             if not actor.alive:
                 continue

@@ -78,7 +78,7 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
     x0, y0 = camera_origin(game, layout)
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
-    mode = ("SIMULATION" if game.config.play_mode == "simulation" else "GOD VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
+    mode = ("SIMULATION" if game.config.play_mode == "simulation" else "DIRECTOR VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
     color = RED if visible is None else CYAN
     clock = f"{int(game.elapsed // 60):02d}:{int(game.elapsed % 60):02d}"
     tasks = f"TASKS {len(game.completed_tasks)}/{len(game.assigned_tasks)}"
@@ -139,9 +139,11 @@ def crew_task_bar(game: Game, width: int) -> str:
 
 
 def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
-    """The ship layout is public; current sight reveals actors and live colors."""
     x, y = pos
     in_view = pos in visible
+    known = pos in game.discovered
+    if not known:
+        return " "
 
     if in_view and game.player_alive and game.player.vent_id is None and pos == game.player_pos:
         symbol = game.player.symbol if game.config.play_mode == "simulation" else "@"
@@ -160,37 +162,29 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
         return " "
     if not in_view:
         if tile == "D":
-            return GRAY + DOOR_CELLS[pos].glyph + RESET
+            return DARK + DOOR_CELLS[pos].glyph + RESET
         if tile == "O":
-            return container_cell(pos, GRAY, zoom)
-        if tile == "T":
-            glyph = "◆" if pos in game.assigned_tasks and pos not in game.completed_tasks else "◇"
-        elif tile == "E":
-            glyph = "◉"
-        elif tile == "V":
-            glyph = "▣"
-        else:
-            glyph = "#" if tile == "#" else ROOM_LABELS.get(pos, "·")
-        return GRAY + glyph + RESET
+            return container_cell(pos, DARK, zoom)
+        return DARK + ("#" if tile == "#" else "·") + RESET
     if tile == "#":
         return BLUE + "#" + RESET
     if tile == "O":
         return container_cell(pos, BLUE, zoom)
     if tile == "D":
-        return BLUE + DOOR_CELLS[pos].glyph + RESET
+        return CYAN + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
         if pos in game.assigned_tasks and pos not in game.completed_tasks:
             return BOLD + YELLOW + "◆" + RESET
         if pos in game.completed_tasks:
             return GREEN + "◇" + RESET
-        return BLUE + "◇" + RESET
+        return DIM + GRAY + "·" + RESET
     if tile == "E":
         return BOLD + RED + "◉" + RESET
     if tile == "V":
         return MAGENTA + "▣" + RESET
     if pos in ROOM_LABELS:
-        return BLUE + ROOM_LABELS[pos] + RESET
-    return BLUE + "·" + RESET
+        return WHITE + ROOM_LABELS[pos] + RESET
+    return DIM + GRAY + "·" + RESET
 
 
 def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
@@ -249,10 +243,10 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     elif manhattan(game.player_pos, EMERGENCY_POS) <= 1 and game.emergency_available:
         hint = RED + " E: call an emergency meeting." + RESET
     else:
-        hint = GRAY + " Gray: layout" + BLUE + "  Blue: in view" + RESET
+        hint = DIM + " ◆ task   ◉ meeting   † body   · floor" + RESET
     footer = [
         vent_hint(game) or " WASD move E use R report V vent TAB view Z zoom P panel",
-        align_status(hint, "T history  H help  Q quit ", layout.width),
+        align_status(hint, "T chat  H help  Q quit ", layout.width),
     ]
     return render_map_layout(game, panel, footer, visible, size)
 
@@ -318,7 +312,7 @@ def npc_activity(npc: Player) -> str:
 
 
 def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
-    """God view: reveal the whole ship, players, bodies and crew state."""
+    """Omniscient live monitor: full map plus every entity's internal state."""
     size = size or terminal_size()
     layout = screen_layout(game, size, observer=True)
     width = layout.panel_width or 32
@@ -359,7 +353,7 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
         else vent_hint(game) or " WASD move E use R report V vent TAB back Z zoom P panel",
         align_status(" " + (f"{game.chat.messages[-1].color}: {game.chat.messages[-1].text}"
                             if game.chat.messages else "[ / ] crew pages   ┆/┄ open doors"),
-                     "T history  H help  Q quit ", layout.width),
+                     "T chat  H help  Q quit ", layout.width),
     ]
     return render_map_layout(game, panel, footer, size=size)
 
@@ -367,17 +361,17 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
 def render_help(game: Game) -> str:
     content = [
         "HOW TO PLAY // THE SKELD",
-        "Map known: gray layout, blue in sight.",
+        "The world keeps running on this screen.",
         "",
         "WASD / arrows move",
         "E             use / interact",
         "R             report a body; K to kill",
         "V             vent in/out; 1/2 travel inside",
-        "Tab           god view / player view",
+        "Tab           map monitor",
         "Z             toggle map zoom (1X / 2X)",
         "P             show / hide side panel",
         "[ / ]         previous / next crew page",
-        "T             chat (write during voting)",
+        "T             broadcast chat (Esc: back)",
         "H             close help",
         "Q             quit game",
         "",

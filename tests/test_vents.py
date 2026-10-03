@@ -91,7 +91,7 @@ class VentTests(unittest.TestCase):
         self.assertFalse(self.game.kill(self.actor.id))
         self.assertFalse(self.game.report())
         self.assertFalse(self.game.meetings.call(self.game, self.actor.id))
-        self.assertFalse(self.game.apply_action(self.actor.id, Action("chat", message="hello")))
+        self.assertTrue(self.game.apply_action(self.actor.id, Action("chat", message="hello")))
         self.actor.kill_clock = 5
         self.game.tick(1)
         self.assertEqual(self.actor.kill_clock, 5)

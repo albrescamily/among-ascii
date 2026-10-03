@@ -4,7 +4,7 @@ import unittest
 from src import Game, GameConfig
 from src.core.tasks import TASK_NAMES
 from src.core.world import CONTAINERS, FURNITURE, VENT_POSITIONS
-from src.terminal.palette import BLUE, GRAY
+from src.terminal.palette import BLUE
 from src.terminal.text import ANSI_SGR, display_width
 from src.terminal.ui import expand_map_cell, map_cell, observer_map_cell
 
@@ -55,10 +55,7 @@ class ContainerTests(unittest.TestCase):
                 self.assertTrue(all(display_width(row) == width for row in rows))
         game.discovered.clear()
         for pos in FURNITURE:
-            cell = map_cell(game, pos, set(), zoom=2)
-            self.assertIn(GRAY, cell)
-            self.assertEqual(ANSI_SGR.sub("", cell),
-                             ANSI_SGR.sub("", observer_map_cell(game, pos, zoom=2)))
+            self.assertEqual(expand_map_cell(map_cell(game, pos, set(), zoom=2), 2), "  ")
         self.assertFalse(any(38 <= x <= 60 and 2 <= y <= 11 for x, y in FURNITURE))
 
     def test_electrical_task_moves_to_yellow_mark_and_can_be_completed(self):
