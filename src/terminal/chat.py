@@ -66,7 +66,7 @@ class ChatView:
 
     @staticmethod
     def can_send(game: Game) -> bool:
-        return (game.config.play_mode == "game" and game.player_alive and not game.outcome)
+        return game.config.play_mode == "game" and game.chat.can_send(game, game.player_id)
 
     def latest(self) -> None:
         self.scroll, self._anchor = 0, None
@@ -145,7 +145,8 @@ class ChatView:
             label = GREEN + f"Live · {len(game.chat.messages)} messages" + RESET
         visible = [row.text for row in rows[start:end]]
         if not rows:
-            visible = [BOLD + "No messages yet." + RESET, GRAY + "Say hello to everyone on the ship." + RESET]
+            hint = "Discuss with the crew." if self.can_send(game) else "Messages can be sent during voting."
+            visible = [BOLD + "No messages yet." + RESET, GRAY + hint + RESET]
         visible = [""] * (height - len(visible)) + visible
         thumb_size = max(1, height * height // max(height, len(rows)))
         thumb_top = (height - thumb_size) * start // max(1, len(rows) - height)
@@ -231,7 +232,9 @@ def render_chat(game: Game, view: ChatView, size: tuple[int, int] | None = None)
         lines.append(row(GRAY + f"Enter send  {back}  Tab latest  ←/→ edit" + RESET))
     else:
         reason = ("You were eliminated. You can still read messages." if not game.player_alive
-                  else "Spectator mode. Follow the conversation here.")
+                  else "Spectator mode. Follow the conversation here." if game.config.play_mode == "simulation"
+                  else "The game has ended. You can read the history." if game.outcome
+                  else "Messages can be sent only during voting.")
         lines.append(row(YELLOW + BOLD + "Read only" + RESET))
         lines += [row(reason)] + [row("")] * (draft_height - 1)
         lines.append(row(GRAY + f"{back}  Tab latest" + RESET))
