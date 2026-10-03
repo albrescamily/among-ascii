@@ -4,7 +4,7 @@ import unittest
 from src import Game, GameConfig
 from src.core.tasks import TASK_NAMES
 from src.core.world import CONTAINERS, FURNITURE, VENT_POSITIONS
-from src.terminal.palette import STEEL, STEEL_SHADE
+from src.terminal.palette import BLUE
 from src.terminal.text import ANSI_SGR, display_width
 from src.terminal.ui import expand_map_cell, map_cell, observer_map_cell
 
@@ -38,7 +38,7 @@ class ContainerTests(unittest.TestCase):
                 live = map_cell(game, pos, {pos}, zoom=zoom)
                 observer = observer_map_cell(game, pos, zoom=zoom)
                 self.assertEqual(live, observer)
-                self.assertTrue(STEEL in live or STEEL_SHADE in live)
+                self.assertIn(BLUE, live)
                 self.assertEqual(display_width(expand_map_cell(live, zoom)), zoom)
                 self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, set(), zoom=zoom)),
                                  ANSI_SGR.sub("", live))
@@ -47,15 +47,12 @@ class ContainerTests(unittest.TestCase):
                 rows = ["".join(ANSI_SGR.sub("", observer_map_cell(game, (x, y), zoom=zoom))
                                 for x in range(left, right + 1))
                         for y in range(top, bottom + 1)]
-                inner_width = (right - left + 1) * zoom - 2
-                self.assertTrue(rows[0].startswith("╭") and rows[0].endswith("╮"))
-                self.assertTrue(rows[-1].startswith("╰") and rows[-1].endswith("╯"))
-                self.assertEqual(rows[0].count("┬"), 2 if zoom == 2 else 0)
-                self.assertEqual(rows[-1].count("┴"), 2 if zoom == 2 else 0)
+                width = (right - left + 1) * zoom
+                self.assertEqual(rows[0], "#" * width)
+                self.assertEqual(rows[-1], "#" * width)
                 for row in rows[1:-1]:
-                    self.assertTrue(row.startswith("│") and row.endswith("│"))
-                    self.assertEqual(row.count(" "), inner_width - (2 if zoom == 2 else 0))
-                self.assertTrue(all(display_width(row) == inner_width + 2 for row in rows))
+                    self.assertEqual(row, "#" * zoom + " " * (width - 2 * zoom) + "#" * zoom)
+                self.assertTrue(all(display_width(row) == width for row in rows))
         game.discovered.clear()
         for pos in FURNITURE:
             self.assertEqual(expand_map_cell(map_cell(game, pos, set(), zoom=2), 2), "  ")

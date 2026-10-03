@@ -60,28 +60,12 @@ def expand_map_cell(cell: str, zoom: int) -> str:
 
 
 def container_cell(pos: Pos, color: str, zoom: int = 1) -> str:
-    """Hollow cargo casing with rounded corners, end straps and a shaded rim."""
+    """Use the ship's wall tiles for the rim, leaving the interior undrawn."""
     x, y = pos
     left, top, right, bottom = next(bounds for bounds in CONTAINERS.values()
                                     if bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3])
-    width = (right - left + 1) * zoom
-    if y == top:
-        row = list("╭" + "─" * (width - 2) + "╮")
-    elif y == bottom:
-        row = list("╰" + "─" * (width - 2) + "╯")
-    else:
-        row = list("│" + " " * (width - 2) + "│")
-    # Keep narrow 1X sprites simple; show the reinforcing straps when they fit.
-    straps = (2, width - 3) if width >= 10 else ()
-    for column in straps:
-        row[column] = "┬" if y == top else "┴" if y == bottom else "│"
-    offset = (x - left) * zoom
-    shade = DARK if color == DARK else STEEL_SHADE
-    result = []
-    for column in range(offset, offset + zoom):
-        ink = shade if y == bottom or column == width - 1 or column in straps else color
-        result.append(ink + row[column])
-    return "".join(result) + RESET
+    glyph = "#" if x in (left, right) or y in (top, bottom) else " "
+    return color + glyph * zoom + RESET
 
 
 def render_map_layout(game: Game, panel: list[str], footer: list[str],
@@ -185,7 +169,7 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
     if tile == "#":
         return BLUE + "#" + RESET
     if tile == "O":
-        return container_cell(pos, STEEL, zoom)
+        return container_cell(pos, BLUE, zoom)
     if tile == "D":
         return CYAN + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
@@ -299,7 +283,7 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
     if tile == "#":
         return BLUE + "#" + RESET
     if tile == "O":
-        return container_cell(pos, STEEL, zoom)
+        return container_cell(pos, BLUE, zoom)
     if tile == "D":
         return CYAN + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
