@@ -1,0 +1,303 @@
+"""Broadcast permissions, meeting deadlines, and non-blocking UI."""
+import os
+from itertools import count
+import unittest
+from unittest.mock import Mock, patch
+
+from src import Action, Game, GameConfig
+from src.core.models import Body
+from src.terminal.chat import ChatView, render_chat
+from src.terminal.driver import Terminal
+from src.terminal.runtime import conduct_meeting, play_one
+from src.terminal.text import ANSI_SGR, display_width
+from src.terminal.ui import render_meeting
+
+
+class ChatTests(unittest.TestCase):
+    def test_broadcast_reaches_distant_and_dead_players_without_mutable_aliases(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game.entity('red').pos = (0, 0)
+        game.entity('blue').alive = False
+        self.assertTrue(game.apply_action('cyan', Action('chat', message='Hello world')))
+        for actor in game.players:
+            events = game.events.for_player(actor.id)
+            self.assertIn('chat_message', [event['kind'] for event in events])
+            self.assertEqual(events[-1]['data']['text'], 'Hello world')
+        snapshot = game.chat.snapshot()
+        snapshot[-1]['text'] = 'tampered'
+        self.assertEqual(game.chat.snapshot()[-1]['text'], 'Hello world')
+
+    def test_dead_and_ejected_players_cannot_send_in_game_or_meetings(self):
+        game = Game(config=GameConfig(end_on_player_death=False, initial_kill_cooldown=0))
+        attacker = game.entity(game.impostor_id)
+        victim = next(actor for actor in game.npcs if actor.role == "crew")
+        attacker.pos, victim.pos = (12, 7), (12, 8)
+        self.assertTrue(game.kill(attacker.id, victim.id))
+        self.assertFalse(game.apply_action(victim.id, Action("chat", message="dead")))
+        game.meetings.call(game, "cyan")
+        self.assertFalse(game.chat.send(game, victim.id, "still dead"))
+        ejected = next(actor.id for actor in game.npcs if actor.alive and actor.role == "crew")
+        game.meetings.resolve(game, dict.fromkeys(game.alive_ids(), ejected))
+        self.assertFalse(game.apply_action(ejected, Action("chat", message="ejected")))
+
+    def test_safe_bounded_history_and_message_validation(self):
+        game = Game(config=GameConfig(chat_history=2, chat_max_length=20))
+        for message in ("old", "Hello\nworld", "\x1b[2J text"):
+            self.assertTrue(game.chat.send(game, "cyan", message))
+        messages = game.chat.snapshot()
+        self.assertEqual([message["sequence"] for message in messages], [2, 3])
+        self.assertEqual(messages[0]["text"], "Hello world")
+        self.assertNotIn("\x1b", messages[-1]["text"])
+        for value in ("", " \t\n", "x" * 21, None):
+            self.assertFalse(game.chat.send(game, "cyan", value))
+        for action in ({"kind": "chat"}, {"kind": "chat", "message": 4},
+                       {"kind": "chat", "message": "ok", "target": "red"},
+                       {"kind": "wait", "message": "ok"}):
+            with self.assertRaises(ValueError):
+                Action.parse(action)
+
+    def test_builtin_bots_greet_once_at_start_and_per_meeting(self):
+        game = Game(config=GameConfig(kills_enabled=False))
+        game.tick(0.1)
+        self.assertEqual(len(game.chat.messages), 11)
+        game.tick(0.1)
+        self.assertEqual(len(game.chat.messages), 11)
+        game.entity("red").alive = False
+        game.meetings.call(game, "cyan")
+        game.tick(0.2)
+        self.assertEqual(len(game.chat.messages), 21)
+        self.assertTrue(all(message.text == "Hello world" for message in game.chat.messages))
+        self.assertEqual(sum(message.sender == "red" for message in game.chat.messages), 1)
+
+    def test_new_game_clears_chat_and_preserves_determinism(self):
+        game = Game()
+        game.tick(0.1)
+        before = game.chat.snapshot()
+        game = Game()
+        self.assertEqual(game.chat.snapshot(), [])
+        game.tick(0.1)
+        self.assertEqual(game.chat.snapshot(), before)
+
+
+class VotingTimerTests(unittest.TestCase):
+    def test_builtin_votes_change_status_during_meeting_and_match_results(self):
+        game = Game(config=GameConfig(voting_seconds=30))
+        game.meetings.call(game, "cyan")
+        self.assertEqual(game.meetings.votes, {})
+        positions = [actor.pos for actor in game.players]
+        cooldowns = [actor.kill_clock for actor in game.players]
+        transitions = []
+        previous = {}
+        for _ in range(24):
+            game.tick(1)
+            self.assertIsNotNone(game.pending_meeting)  # Local player has not voted.
+            ballots = dict(game.meetings.votes)
+            for actor_id, target in previous.items():
+                self.assertIn(actor_id, ballots)
+                self.assertEqual(ballots[actor_id], target)
+            if len(ballots) > len(previous):
+                transitions.append(game.meetings.elapsed)
+            screen = ANSI_SGR.sub("", render_meeting(game, "cyan", None, size=(60, 20)))
+            self.assertEqual(screen.count("VOTED"), len(ballots))
+            self.assertEqual(screen.count("WAITING"), 12 - len(ballots))
+            previous = ballots
+        self.assertGreater(len(transitions), 1)
+        self.assertEqual(len(game.meetings.votes), 11)
+        self.assertNotIn("cyan", game.meetings.votes)
+        self.assertEqual([actor.pos for actor in game.players], positions)
+        self.assertEqual([actor.kill_clock for actor in game.players], cooldowns)
+        self.assertEqual(game.elapsed, 0)
+        self.assertTrue(game.apply_action("cyan", "vote"))
+        submitted = dict(game.meetings.votes)
+        game.tick(0.1)
+        self.assertIsNone(game.pending_meeting)
+        result = next(event for event in reversed(game.events.snapshot()) if event["kind"] == "meeting_resolved")
+        self.assertEqual(result["data"]["votes"], submitted)
+
+    def test_builtin_vote_timing_is_seeded_and_resets_each_meeting(self):
+        game = Game(config=GameConfig(voting_seconds=30))
+
+        def run_meeting():
+            game.meetings.call(game, "cyan")
+            history = []
+            for _ in range(24):
+                game.tick(1)
+                history.append(dict(game.meetings.votes))
+            return history
+
+        first = run_meeting()
+        game = Game(config=GameConfig(voting_seconds=30))
+        self.assertEqual(first, run_meeting())
+        old_schedule = dict(game.npc_system.meeting_vote_times)
+        game.meetings.resolve(game, dict.fromkeys(game.alive_ids(), None))
+        game.meetings.call(game, "cyan")
+        self.assertEqual(game.meetings.votes, {})
+        self.assertNotEqual(old_schedule, game.npc_system.meeting_vote_times)
+        game.tick(0.1)
+        self.assertEqual(game.meetings.votes, {})
+
+    def test_timeout_skips_missing_votes_and_freezes_world_clocks(self):
+        game = Game(config=GameConfig(voting_seconds=0.3, npc_ai_enabled=False))
+        game.meetings.call(game, 'cyan')
+        positions = [actor.pos for actor in game.players]
+        cooldown = game.kill_cooldown
+        game.apply_action('cyan', Action('chat', message='Hello world'))
+        game.tick(0.1)
+        self.assertAlmostEqual(game.meetings.remaining, 0.2)
+        self.assertEqual([actor.pos for actor in game.players], positions)
+        self.assertEqual(game.kill_cooldown, cooldown)
+        self.assertTrue(game.apply_action('cyan', Action('vote', 'red')))
+        game.tick(0.2)
+        self.assertIsNone(game.pending_meeting)
+        self.assertEqual(game.elapsed, 0)
+        self.assertEqual(game.meetings.last_result, (None, {'red': 1, None: 11}))
+        game.meetings.call(game, 'cyan')
+        self.assertEqual(game.meetings.remaining, 0.3)
+        self.assertEqual(game.meetings.votes, {})
+
+
+    def test_voting_and_chat_config_validation(self):
+        for name, value in (("voting_seconds", 0), ("voting_seconds", float("nan")),
+                            ("chat_history", 0), ("chat_max_length", -1), ("chat_history", 2.5)):
+            with self.assertRaises(ValueError):
+                GameConfig.from_dict({name: value})
+
+
+class ChatTerminalTests(unittest.TestCase):
+    def test_composer_preserves_case_backspace_and_blocks_commands(self):
+        game = Game()
+        view = ChatView()
+        for key in [*"Hello worldq", "\x08", "\r"]:
+            self.assertFalse(view.handle_key(game, key))
+        self.assertEqual(game.chat.messages[-1].text, "Hello world")
+        self.assertEqual(view.draft, "")
+        self.assertIsNone(game.outcome)
+        self.assertTrue(view.handle_key(game, "escape"))
+        game.player.alive = False
+        for key in [*"blocked", "\r"]:
+            view.handle_key(game, key)
+        self.assertEqual(len(game.chat.messages), 1)
+
+    def test_simulation_chat_is_read_only(self):
+        game = Game(config=GameConfig(play_mode="simulation"))
+        view = ChatView()
+        for key in [*"blocked", "\r"]:
+            view.handle_key(game, key)
+        self.assertEqual(len(game.chat.messages), 0)
+        self.assertIn("Read only", render_chat(game, view))
+
+    def test_chat_and_meeting_screens_fit_without_hiding_controls(self):
+        game = Game()
+        body = Body("red", "Red", (1, 1), "Navigation", 0, ["blue", "green"])
+        game.meetings.call(game, "cyan", body)
+        initial = render_meeting(game, "cyan", body, size=(60, 20))
+        self.assertEqual(initial.count("WAITING"), len(game.alive_ids()))
+        self.assertTrue(game.apply_action("cyan", "vote"))  # Skip is a submitted ballot.
+        self.assertTrue(game.apply_action("red", Action("vote", "blue")))
+        game.chat.send(game, "cyan", "Long text " * 20)
+        view = ChatView()
+        view.draft = "界" * 200
+        for size in ((60, 20), (80, 24), (120, 38), (230, 49)):
+            for screen in (render_chat(game, view, size), render_meeting(game, "cyan", body, size=size)):
+                lines = ANSI_SGR.sub("", screen).splitlines()
+                self.assertLessEqual(len(lines), size[1] - 1)
+                self.assertTrue(all(display_width(line) <= size[0] - 1 for line in lines))
+                self.assertIn("Esc", screen)
+                self.assertIn("╚", screen)
+            voting = render_meeting(game, "cyan", body, size=size)
+            plain_voting = ANSI_SGR.sub("", voting)
+            self.assertIn("Red body found.", plain_voting)
+            self.assertNotIn("Navigation", plain_voting)
+            self.assertNotIn("Meeting called", plain_voting)
+            self.assertNotIn("nearby", plain_voting)
+            self.assertRegex(plain_voting, r"Cyan @\s+VOTED")
+            self.assertRegex(plain_voting, r"Red\s+VOTED")
+            self.assertRegex(plain_voting, r"Blue\s+WAITING")
+            self.assertEqual(plain_voting.count("WAITING"), len(game.alive_ids()) - 2)
+            self.assertEqual(plain_voting.count("VOTED"), 2)
+            game.meetings.votes["red"] = "green"
+            self.assertEqual(voting, render_meeting(game, "cyan", body, size=size))
+            game.meetings.votes["red"] = "blue"
+            self.assertNotIn("Hello world", voting)
+            self.assertNotIn("Long text", voting)
+            self.assertNotIn("BROADCAST CHAT", voting)
+            self.assertIn("T chat", voting)
+            self.assertIn("BROADCAST CHAT", render_chat(game, view, size))
+            self.assertIn("Esc voting", render_chat(game, view, size))
+        view.scroll = 1000
+        self.assertIn("Red: Hello world", ANSI_SGR.sub("", render_chat(game, view, (60, 20))))
+
+    def test_live_game_chat_keeps_ticking_and_does_not_execute_typing(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False))
+        term = Mock()
+        term.read_keys.side_effect = [["t", *"QWERTY", "\r"], ["escape"], ["q"]]
+        with patch("src.terminal.runtime.Game", return_value=game), \
+                patch.object(game, "move_player") as move, patch.object(game, "interact") as interact, \
+                patch.object(game, "tick", wraps=game.tick) as tick, \
+                patch("src.terminal.runtime.time.sleep"):
+            play_one(term)
+        move.assert_not_called()
+        interact.assert_not_called()
+        self.assertEqual(game.chat.messages[-1].text, "QWERTY")
+        self.assertGreaterEqual(tick.call_count, 2)
+
+    def test_meeting_chat_does_not_pause_deadline_or_treat_text_as_votes(self):
+        game = Game(config=GameConfig(voting_seconds=1))
+        game.meetings.call(game, "cyan")
+        term = Mock()
+        term.read_keys.side_effect = [["t", *"Q123Hello", "\r"], []]
+        with patch.object(game.meetings, "bot_vote", return_value=None), \
+                patch("src.terminal.runtime.time.monotonic", side_effect=[0, 0.1, 1, 1, 1.1, 5]), \
+                patch("src.terminal.runtime.time.sleep"):
+            conduct_meeting(term, game)
+        self.assertEqual(game.chat.messages[-1].text, "Q123Hello")
+        self.assertEqual(game.meetings.last_result, (None, {None: 12}))
+        self.assertIsNone(game.outcome)
+        self.assertEqual(game.elapsed, 0)
+
+    def test_switching_between_voting_and_chat_preserves_draft_and_vote(self):
+        game = Game(config=GameConfig(voting_seconds=2))
+        game.meetings.call(game, "cyan")
+        term = Mock()
+        keys = iter([["t", *"Q123Hello"], ["escape"], ["t"], ["\r", "escape"],
+                     ["0"], ["t"], ["escape"]])
+        term.read_keys.side_effect = lambda: next(keys, [])
+        with patch.object(game.meetings, "bot_vote", return_value=None), \
+                patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.1)), \
+                patch("src.terminal.runtime.time.sleep"):
+            conduct_meeting(term, game)
+        screens = [ANSI_SGR.sub("", call.args[0]) for call in term.draw.call_args_list]
+        for index in (0, 2, 4, 5, 7):
+            self.assertIn("EMERGENCY MEETING", screens[index])
+            self.assertNotIn("Hello world", screens[index])
+            self.assertNotIn("Q123Hello", screens[index])
+        for index in (1, 3, 6):
+            self.assertIn("BROADCAST CHAT", screens[index])
+            self.assertIn("Esc voting", screens[index])
+        self.assertIn("Q123Hello", screens[3])
+        self.assertIn("Skip recorded", screens[7])
+        self.assertEqual(game.chat.messages[-1].text, "Q123Hello")
+        self.assertEqual(game.meetings.last_result, (None, {None: 12}))
+        self.assertIsNone(game.outcome)
+        self.assertEqual(game.elapsed, 0)
+
+    @unittest.skipUnless(os.name == "nt", "Windows console input")
+    def test_windows_keyboard_keeps_uppercase_for_chat(self):
+        terminal = Terminal()
+        with patch("msvcrt.kbhit", side_effect=[True, True, False]), \
+                patch("msvcrt.getwch", side_effect=["H", "é"]):
+            self.assertEqual(terminal._read_windows(), ["H", "é"])
+
+    def test_unix_keyboard_preserves_split_utf8_and_case(self):
+        terminal = Terminal()
+        terminal.buffer = b"\xc3"
+        with patch("src.terminal.driver.sys.stdin.isatty", return_value=True), \
+                patch("select.select", return_value=([], [], [])):
+            self.assertEqual(terminal._read_unix(), [])
+            terminal.buffer += b"\xa9 Hello"
+            self.assertEqual(terminal._read_unix(), list("é Hello"))
+            self.assertEqual(terminal.buffer, b"")
+
+
+if __name__ == "__main__":
+    unittest.main()
