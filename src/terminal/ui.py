@@ -173,6 +173,17 @@ VIEW_NAMES = {"player": "PLAYER VIEW", "god": "GOD VIEW", "minimap": "MINI MAP"}
 VIEW_COLORS = {"player": CYAN, "god": YELLOW, "minimap": GREEN}
 
 
+def god_paint(game: Game, view_mode: str) -> bool:
+    """The yellow God view is a Game/Test mode cheat view; Simulation keeps the blue ship."""
+    return view_mode == "god" and game.config.play_mode != "simulation"
+
+
+def view_color(game: Game, view_mode: str) -> str:
+    if view_mode == "god" and not god_paint(game, view_mode):
+        return BLUE
+    return VIEW_COLORS[view_mode]
+
+
 def mode_label(game: Game, view_mode: str) -> str:
     """Play mode, plus which view is open; Simulation only has the spectator view."""
     if game.config.play_mode == "simulation":
@@ -200,7 +211,7 @@ def hud_row(fields: list[tuple[str, str]], width: int) -> str:
 
 def hud_lines(game: Game, layout: ScreenLayout, view: str, view_mode: str) -> list[str]:
     """Top HUD: title + mode, LOCATION / TIME / ALIVE / TASKS / VIEW, then the task bar or alarm."""
-    color = VIEW_COLORS[view_mode]
+    color = view_color(game, view_mode)
     if game.config.play_mode == "simulation":
         location = f"{room_at(game.camera_pos)} {GRAY}(camera){RESET}"
         progress = game.tasks.crew_progress(game)
@@ -239,7 +250,7 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
         return fit_screen([], size)
     view_mode = view_mode or ("god" if visible is None else "player")
     layout = screen_layout(game, size, observer=view_mode != "player")
-    border = RED if game.sabotage.kind else YELLOW if view_mode == "god" else BLUE
+    border = RED if game.sabotage.kind else YELLOW if god_paint(game, view_mode) else BLUE
     x0, y0 = camera_origin(game, layout)
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
@@ -572,7 +583,7 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
     for body in game.bodies:
         if body.pos == pos:
             return BOLD + RED + "†" + RESET
-    return ship_cell(game, pos, zoom, YELLOW)
+    return ship_cell(game, pos, zoom, YELLOW if game.config.play_mode != "simulation" else BLUE)
 
 
 def minimap_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
