@@ -89,7 +89,7 @@ class GameTests(unittest.TestCase):
                 self.assertEqual(room_at(pos), "Cafeteria")
 
     def test_task_completes_in_real_time(self):
-        game = Game(seed=2)
+        game = Game(config=GameConfig(seed=2, player_role="crew"))
         task = game.assigned_tasks[0]
         game.player_pos = task
         game.interact()

@@ -13,7 +13,7 @@ from src.terminal.ui import map_cell, observer_map_cell, render_game, render_obs
 
 
 def make_game(mode="game", **overrides):
-    options = dict(play_mode=mode, npc_ai_enabled=False, kills_enabled=False,
+    options = dict(play_mode=mode, npc_ai_enabled=False, kills_enabled=False, player_role="crew",
                    task_win_mode="disabled", initial_sabotage_cooldown=0)
     options.update(overrides)
     return Game(config=GameConfig(**options))

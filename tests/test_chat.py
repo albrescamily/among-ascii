@@ -59,7 +59,7 @@ class ChatTests(unittest.TestCase):
                 Action.parse(action)
 
     def test_builtin_bots_only_greet_once_per_voting_session(self):
-        game = Game(config=GameConfig(kills_enabled=False))
+        game = Game(config=GameConfig(kills_enabled=False, seed=7, player_role="crew"))
         game.tick(0.1)
         self.assertEqual(len(game.chat.messages), 0)
         game.npc_system.greet(game)
@@ -120,7 +120,7 @@ class ChatTests(unittest.TestCase):
 
 class VotingTimerTests(unittest.TestCase):
     def test_builtin_votes_change_status_during_meeting_and_match_results(self):
-        game = Game(config=GameConfig(voting_seconds=30))
+        game = Game(config=GameConfig(voting_seconds=30, seed=7))
         game.meetings.call(game, "cyan")
         self.assertEqual(game.meetings.votes, {})
         positions = [actor.pos for actor in game.players]
@@ -154,7 +154,7 @@ class VotingTimerTests(unittest.TestCase):
         self.assertEqual(result["data"]["votes"], submitted)
 
     def test_builtin_vote_timing_is_seeded_and_resets_each_meeting(self):
-        game = Game(config=GameConfig(voting_seconds=30))
+        game = Game(config=GameConfig(voting_seconds=30, seed=7))
 
         def run_meeting():
             game.meetings.call(game, "cyan")
@@ -165,7 +165,7 @@ class VotingTimerTests(unittest.TestCase):
             return history
 
         first = run_meeting()
-        game = Game(config=GameConfig(voting_seconds=30))
+        game = Game(config=GameConfig(voting_seconds=30, seed=7))
         self.assertEqual(first, run_meeting())
         old_schedule = dict(game.npc_system.meeting_vote_times)
         game.meetings.resolve(game, dict.fromkeys(game.alive_ids(), None))

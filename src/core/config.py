@@ -1,6 +1,7 @@
 """Validated game settings, loaded from JSON or constructed in Python."""
 from __future__ import annotations
 import json
+from typing import Optional
 import math
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -18,13 +19,13 @@ MENU_LIMITS = {
 
 @dataclass(frozen=True)
 class GameConfig:
-    seed: int = 7
+    seed: Optional[int] = None  # None: a fresh random seed every match (tasks, impostors)
     play_mode: str = "game"  # simulation is an inactive scaffold
     test_mode: bool = False  # Game-mode sandbox: idle NPCs, role swap (X), reset (N)
     allow_god_view: bool = True  # Caps Lock God view in Game mode; forced on by test_mode
     player_count: int = 12
     player_color: str = "Cyan"
-    player_role: str = "crew"
+    player_role: str = "random"  # crew, impostor, or random (the human may be an impostor)
     impostor_count: int = 1
     tasks_per_player: int = 5
     task_seconds: float = 1.8
@@ -70,7 +71,9 @@ class GameConfig:
         strings = {"play_mode", "player_color", "player_role", "task_win_mode"}
         for field in fields(self):
             value = getattr(self, field.name)
-            if field.name in integers:
+            if field.name == "seed" and value is None:
+                valid = True
+            elif field.name in integers:
                 valid = type(value) is int
             elif field.name in booleans:
                 valid = type(value) is bool

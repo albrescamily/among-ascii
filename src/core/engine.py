@@ -23,12 +23,13 @@ class Game:
         self.config = config or GameConfig()
         if seed is not None:
             self.config = replace(self.config, seed=seed)
+        if self.config.seed is None:
+            self.config = replace(self.config, seed=random.SystemRandom().randrange(2 ** 31))
         if self.config.play_mode == "simulation":
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="team" if self.config.task_win_mode == "player"
                                   else self.config.task_win_mode)
         elif self.config.test_mode:
-            # Sandbox: NPCs are idle dummies, nothing ends the round, abilities start ready.
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="disabled", initial_kill_cooldown=0.0,
                                   initial_sabotage_cooldown=0.0, initial_door_cooldown=0.0)

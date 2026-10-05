@@ -127,6 +127,21 @@ class NpcDoorTests(unittest.TestCase):
         game.tick(0.01)
         self.assertFalse(game.doors.closed)
 
+    def test_npc_partners_never_sabotage_for_a_human_impostor(self):
+        game = make_game(npc_ai_enabled=True, player_role="impostor", impostor_count=2,
+                         initial_sabotage_cooldown=0)
+        partner = next(actor for actor in game.npcs if actor.role == "impostor")
+        victim = next(actor for actor in game.npcs if actor.role == "crew")
+        partner.pos, victim.pos = (30, 18), (34, 18)
+        game.tick(0.01)
+        self.assertIsNone(game.sabotage.kind)
+        self.assertFalse(game.doors.closed)
+        # A human impostor still triggers them by hand.
+        self.assertTrue(game.apply_action(game.player_id, Action("sabotage", "lights")))
+        crew = make_game(npc_ai_enabled=True, player_role="crew", initial_sabotage_cooldown=0)
+        crew.tick(0.01)
+        self.assertIsNotNone(crew.sabotage.kind)
+
     def test_test_mode_npcs_stay_idle(self):
         game = make_game(test_mode=True, player_role="crew")
         impostor = game.entity(game.impostor_id)

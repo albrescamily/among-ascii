@@ -127,12 +127,14 @@ class NPCSystem:
     def tick(self, game: "Game") -> None:
         if not game.config.npc_ai_enabled:
             return
-        if not game.sabotage.kind and game.sabotage.cooldown <= 1e-9 and game.config.sabotage_enabled:
+        npc_sabotage = game.player.role != "impostor"
+        if (npc_sabotage and not game.sabotage.kind and game.sabotage.cooldown <= 1e-9
+                and game.config.sabotage_enabled):
             impostor = next((a for a in game.npcs if a.alive and a.role == "impostor"), None)
             if impostor is not None:
                 game.sabotage.start(game, impostor.id, game.rng.choice(tuple(PANELS)))
         for actor in game.npcs:
-            if actor.alive and actor.role == "impostor":
+            if npc_sabotage and actor.alive and actor.role == "impostor":
                 self.trap(game, actor)
         for actor in game.npcs:
             if not actor.alive:
