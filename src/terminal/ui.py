@@ -436,7 +436,8 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
         return " "
     if not in_view:
         if tile in ("D", "C"):
-            return door_cell(game, pos, GRAY)
+            # A door's state is only known up close: unseen doors always read as open.
+            return GRAY + OPEN_DOOR + RESET
         if tile == "O":
             return container_cell(pos, GRAY, zoom)
         if tile == "T":
@@ -530,7 +531,7 @@ def vent_hint(game: Game) -> str:
 
 
 def ship_cell(game: Game, pos: Pos, zoom: int, structure: str, floor: str = "·",
-              task: str = MAGENTA) -> str:
+              task: str = MAGENTA, door_states: bool = True) -> str:
     """Static ship layout (no characters): `structure` colors walls/doors, `task` your pending tasks."""
     x, y = pos
     emergency_cell = sabotage_marker(game, pos) or alarm_terrain(game, pos, zoom)
@@ -544,7 +545,7 @@ def ship_cell(game: Game, pos: Pos, zoom: int, structure: str, floor: str = "·"
     if tile == "O":
         return container_cell(pos, structure, zoom)
     if tile in ("D", "C"):
-        return door_cell(game, pos, structure)
+        return door_cell(game, pos, structure) if door_states else structure + OPEN_DOOR + RESET
     if tile == "T":
         if pos in game.completed_tasks and own_tasks(game):
             return GREEN + "◇" + RESET
@@ -579,7 +580,8 @@ def minimap_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
     if game.player_alive and game.player_pos == pos and game.config.play_mode != "simulation":
         glyph = "▣" if game.player.vent_id is not None else "@"
         return BOLD + game.player.color + glyph + RESET
-    return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW)
+    # Only whoever controls the doors (impostor / spectator) sees which are closed on the map.
+    return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW, door_states=door_actor(game) is not None)
 
 
 def npc_activity(npc: Player) -> str:

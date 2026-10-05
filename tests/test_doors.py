@@ -36,6 +36,23 @@ class DoorTests(unittest.TestCase):
         self.assertTrue(game.is_walkable(door.cells[0]))
         self.assertEqual(ANSI_SGR.sub("", map_cell(game, door.cells[0], {door.cells[0]})), "-")
 
+    def test_closed_doors_are_only_seen_up_close(self):
+        from src.terminal.ui import minimap_cell
+        game = make_game(player_role="crew")
+        impostor = game.entity(game.impostor_id)
+        game.doors.close(game, impostor.id, "medbay")
+        cell = room_doors("medbay")[0].cells[0]
+        game.player_pos = (49, 10)  # Cafeteria: far from MedBay
+        self.assertEqual(ANSI_SGR.sub("", map_cell(game, cell, game.visible_positions())), "-")
+        self.assertEqual(ANSI_SGR.sub("", minimap_cell(game, cell)), "-")
+        game.player_pos = (cell[0], cell[1] - 2)  # in the hallway right above the door
+        self.assertEqual(ANSI_SGR.sub("", map_cell(game, cell, game.visible_positions())), "+")
+        # The impostor controlling the doors still sees them on the mini map.
+        self.assertEqual(ANSI_SGR.sub("", minimap_cell(make_game(), cell)), "-")
+        owner = make_game()
+        owner.doors.close(owner, owner.player_id, "medbay")
+        self.assertEqual(ANSI_SGR.sub("", minimap_cell(owner, cell)), "+")
+
     def test_at_most_three_rooms_closed(self):
         game = make_game()
         # The limit counts rooms: Cafeteria and Storage have 3 doors each and still fit.

@@ -148,11 +148,11 @@ class MapGeometryTests(unittest.TestCase):
             with self.subTest(room=door.room, pos=pos):
                 for code, expected in (("D", "-"), ("C", "+")):  # open, closed
                     game.grid[pos[1]][pos[0]] = code
-                    cells = (observer_map_cell(game, pos), map_cell(game, pos, {pos}),
-                             map_cell(game, pos, set()))
-                    for cell in cells:
+                    for cell in (observer_map_cell(game, pos), map_cell(game, pos, {pos})):
                         self.assertEqual(ANSI_SGR.sub("", cell), expected)
                         self.assertEqual(display_width(cell), 1)
+                    # Out of sight, a door's state is unknown: it always reads as open.
+                    self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, set())), "-")
                 game.grid[pos[1]][pos[0]] = "D"
 
 
