@@ -93,7 +93,7 @@ def conduct_meeting(term: Terminal, game: Game) -> None:
                 stop_game(game)
                 game.pending_meeting = None
                 return
-            if key == "t":
+            if key in ("t", "\t"):  # Tab toggles between the ballot and the chat.
                 chat_view = meeting_chat
             elif not automatic and (key == "0" or key in VOTE_KEYS):
                 if game.player_id in game.meetings.votes:
@@ -114,9 +114,9 @@ def conduct_meeting(term: Terminal, game: Game) -> None:
     if game.meetings.last_result is None:
         return
     ejected, counts = game.meetings.last_result
-    deadline = time.monotonic() + (0.8 if automatic else 3.0)
-    while time.monotonic() < deadline:
-        term.draw(render_vote_result(game, ejected, counts))
+    deadline = time.monotonic() + game.config.vote_result_seconds
+    while (now := time.monotonic()) < deadline:
+        term.draw(render_vote_result(game, ejected, counts, seconds_left=deadline - now))
         if term.read_keys():
             break
         time.sleep(0.03)

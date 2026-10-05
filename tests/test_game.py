@@ -170,6 +170,26 @@ class RenderingTests(unittest.TestCase):
                 self.assertIn("Press any key", screens[1])
                 self.assertIn("play again", screens[2])
 
+    def test_vote_results_explain_the_outcome_and_fit(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
+        impostor = game.entity(game.impostor_id)
+        impostor.alive = False
+        with patch("src.terminal.text.shutil.get_terminal_size", return_value=(80, 24)):
+            screen = ANSI_SGR.sub("", render_vote_result(game, impostor.id, {impostor.id: 6, None: 3}))
+        self.assertIn(f"{impostor.name} was ejected.", screen)
+        self.assertIn("They were the impostor.", screen)
+        self.assertIn("No impostors remain.", screen)
+        self.assertRegex(screen, rf"{impostor.name}\s+● ● ● ● ● ●  6 ◀ ejected")  # one dot per vote
+        with patch("src.terminal.text.shutil.get_terminal_size", return_value=(80, 24)):
+            tie = ANSI_SGR.sub("", render_vote_result(game, None, {"blue": 2, None: 2, "red": 1}))
+        self.assertIn("Nobody was ejected.", tie)
+        self.assertIn("Tie: Blue, Skip (2 each).", tie)
+        everyone = {actor.id: 1 for actor in game.players} | {None: 1}
+        with patch("src.terminal.text.shutil.get_terminal_size", return_value=(60, 20)):
+            lines = render_vote_result(game, None, everyone).splitlines()
+        self.assertLessEqual(len(lines), 19)
+        self.assertIn("╰", lines[-1])
+
     def test_all_screens_fit_on_resize(self):
         game = Game(seed=6)
         game.messages.extend(["Long event " * 30] * 4)

@@ -228,7 +228,8 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertEqual(game.chat.messages[-1].text, "Hello world")
         self.assertEqual(view.draft, "")
         self.assertIsNone(game.outcome)
-        self.assertTrue(view.handle_key(game, "escape"))
+        self.assertFalse(view.handle_key(game, "escape"))  # Esc would quit from the ballot
+        self.assertTrue(view.handle_key(game, "\t"))  # Tab returns to voting
         game.player.alive = False
         for key in [*"blocked", "\r"]:
             view.handle_key(game, key)
@@ -259,7 +260,7 @@ class ChatTerminalTests(unittest.TestCase):
                 lines = ANSI_SGR.sub("", screen).splitlines()
                 self.assertLessEqual(len(lines), size[1] - 1)
                 self.assertTrue(all(display_width(line) <= size[0] - 1 for line in lines))
-                self.assertIn("Esc", screen)
+                self.assertTrue("Esc" in screen or "Tab voting" in screen)  # a way back is always shown
                 self.assertTrue("╚" in screen or "╰" in screen)  # bottom frame still on screen
             voting = render_meeting(game, "cyan", body, size=size)
             plain_voting = ANSI_SGR.sub("", voting)
@@ -278,9 +279,9 @@ class ChatTerminalTests(unittest.TestCase):
             self.assertNotIn("Hello world", voting)
             self.assertNotIn("Long text", voting)
             self.assertNotIn("BROADCAST CHAT", voting)
-            self.assertIn("T chat", voting)
+            self.assertIn("Tab chat", voting)
             self.assertIn("BROADCAST CHAT", render_chat(game, view, size))
-            self.assertIn("Esc voting", render_chat(game, view, size))
+            self.assertIn("Tab voting", render_chat(game, view, size))
         view.scroll = 1000
         self.assertIn("Red: Hello world", ANSI_SGR.sub("", render_chat(game, view, (60, 20))))
 
@@ -301,7 +302,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertGreaterEqual(tick.call_count, 2)
 
     def test_meeting_chat_does_not_pause_deadline_or_treat_text_as_votes(self):
-        game = Game(config=GameConfig(voting_seconds=1))
+        game = Game(config=GameConfig(voting_seconds=1, vote_result_seconds=3))
         game.meetings.call(game, "cyan")
         term = Mock()
         term.read_keys.side_effect = [["t", *"Q123Hello", "\r"], []]
@@ -318,8 +319,8 @@ class ChatTerminalTests(unittest.TestCase):
         game = Game(config=GameConfig(voting_seconds=2))
         game.meetings.call(game, "cyan")
         term = Mock()
-        keys = iter([["t", *"Q123Hello"], ["escape"], ["t"], ["\r", "escape"],
-                     ["0"], ["t"], ["escape"]])
+        keys = iter([["t", *"Q123Hello"], ["\t"], ["\t"], ["\r", "\t"],
+                     ["0"], ["t"], ["\t"]])
         term.read_keys.side_effect = lambda: next(keys, [])
         with patch.object(game.meetings, "bot_vote", return_value=None), \
                 patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.1)), \
@@ -332,9 +333,9 @@ class ChatTerminalTests(unittest.TestCase):
             self.assertNotIn("Q123Hello", screens[index])
         for index in (1, 3, 6):
             self.assertIn("BROADCAST CHAT", screens[index])
-            self.assertIn("Esc voting", screens[index])
+            self.assertIn("Tab voting", screens[index])
         self.assertIn("Q123Hello", screens[3])
-        self.assertIn("Skip recorded", screens[7])
+        self.assertIn("Your vote: Skip", screens[7])
         self.assertEqual(game.chat.messages[-1].text, "Q123Hello")
         self.assertEqual(game.meetings.last_result, (None, {None: 12}))
         self.assertIsNone(game.outcome)
@@ -346,6 +347,24 @@ class ChatTerminalTests(unittest.TestCase):
         with patch("msvcrt.kbhit", side_effect=[True, True, False]), \
                 patch("msvcrt.getwch", side_effect=["H", "é"]):
             self.assertEqual(terminal._read_windows(), ["H", "é"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows console input")
+    def test_windows_scroll_keys_never_leak_letters_into_the_draft(self):
+        terminal = Terminal()
+        # Scrolling fast: the code byte is not ready when the prefix is read
+        # (kbhit is False in between). It used to type "HP" into the chat.
+        with patch("msvcrt.kbhit", side_effect=[True, False, True, True, True, False]), \
+                patch("msvcrt.getwch", side_effect=["\xe0", "H", "\xe0", "P", "\xe0", "I", "\x00", "Q"]):
+            self.assertEqual(terminal._read_windows(), ["up"])
+            self.assertEqual(terminal._read_windows(), ["down", "pageup", "pagedown"])
+
+    def test_unix_escape_sequences_never_leak_as_text(self):
+        terminal = Terminal()
+        terminal.buffer = b"\x1b[A\x1b[5~\x1b[6~hi\x1b[3~\x1b[200~\x1b["
+        self.assertEqual(terminal.parse_unix_buffer(), ["up", "pageup", "pagedown", "h", "i", "delete"])
+        self.assertEqual(terminal.buffer, b"\x1b[")  # incomplete sequence waits for more bytes
+        terminal.buffer += b"B"
+        self.assertEqual(terminal.parse_unix_buffer(), ["down"])
 
     def test_unix_keyboard_preserves_split_utf8_and_case(self):
         terminal = Terminal()

@@ -6,6 +6,15 @@ from typing import Optional
 from .palette import RESET
 from .text import fit_line, terminal_size
 
+# Windows console: special keys arrive as "\x00"/"\xe0" followed by one of these codes.
+WINDOWS_KEYS = {"H": "up", "P": "down", "K": "left", "M": "right", "I": "pageup", "Q": "pagedown",
+                "G": "home", "O": "end", "S": "delete"}
+UNIX_KEYS = {b"\x1b[A": "up", b"\x1b[B": "down", b"\x1b[D": "left", b"\x1b[C": "right",
+             b"\x1b[5~": "pageup", b"\x1b[6~": "pagedown", b"\x1b[H": "home", b"\x1b[F": "end",
+             b"\x1b[1~": "home", b"\x1b[4~": "end", b"\x1b[3~": "delete",
+             b"\x1bOA": "up", b"\x1bOB": "down", b"\x1bOD": "left", b"\x1bOC": "right",
+             b"\x1bOH": "home", b"\x1bOF": "end"}
+
 class Terminal:
     """Cross-platform raw, non-blocking keyboard input and ANSI output."""
 
@@ -84,12 +93,13 @@ class Terminal:
     def _read_windows(self) -> list[str]:
         import msvcrt
         keys: list[str] = []
-        arrows = {"H": "up", "P": "down", "K": "left", "M": "right"}
         while msvcrt.kbhit():
             ch = msvcrt.getwch()
             if ch in ("\x00", "\xe0"):
-                if msvcrt.kbhit():
-                    keys.append(arrows.get(msvcrt.getwch(), ""))
+                # Special keys are a prefix plus a code. Always read the code: checking
+                # kbhit() first could drop the prefix and leak the code ("H"/"P" while
+                # scrolling) into the chat draft as text.
+                keys.append(WINDOWS_KEYS.get(msvcrt.getwch(), ""))
             elif ch == "\x1b":
                 keys.append("escape")
             elif ch == "\x03":
@@ -109,21 +119,24 @@ class Terminal:
             except BlockingIOError:
                 break
         self.buffer += b"".join(chunks)
+        return self.parse_unix_buffer()
+
+    def parse_unix_buffer(self) -> list[str]:
+        """Turn buffered bytes into keys; escape sequences never leak as text."""
         keys: list[str] = []
-        arrows = {b"\x1b[A": "up", b"\x1b[B": "down", b"\x1b[D": "left", b"\x1b[C": "right"}
         while self.buffer:
-            matched = False
-            for sequence, key in arrows.items():
-                if self.buffer.startswith(sequence):
-                    keys.append(key)
-                    self.buffer = self.buffer[len(sequence):]
-                    matched = True
-                    break
-            if matched:
+            if self.buffer.startswith(b"\x1b[") or self.buffer.startswith(b"\x1bO"):
+                # CSI/SS3: parameters, then one final byte in 0x40-0x7E.
+                end = next((index for index in range(2, len(self.buffer))
+                            if 0x40 <= self.buffer[index] <= 0x7E), None)
+                if end is None:
+                    break  # Wait for the rest of the sequence.
+                sequence, self.buffer = self.buffer[:end + 1], self.buffer[end + 1:]
+                keys.append(UNIX_KEYS.get(sequence, ""))  # Unknown sequences are dropped.
                 continue
-            if self.buffer.startswith(b"\x1b") and len(self.buffer) == 1:
+            if self.buffer.startswith(b"\x1b"):
                 keys.append("escape")
-                self.buffer = b""
+                self.buffer = self.buffer[1:]
                 continue
             first = self.buffer[0]
             length = 1 if first < 0x80 else 2 if 0xC2 <= first <= 0xDF else 3 if 0xE0 <= first <= 0xEF else 4 if 0xF0 <= first <= 0xF4 else 1
@@ -139,7 +152,7 @@ class Terminal:
             if char == "\x03":
                 raise KeyboardInterrupt
             keys.append(char)
-        return keys
+        return [key for key in keys if key]
 
     def draw(self, text: str) -> None:
         columns, rows = terminal_size()

@@ -773,32 +773,70 @@ def render_help(game: Game) -> str:
 VOTE_KEYS = "123456789abc"
 
 
+def meeting_reason(game: Game, reporter_id: str, body: Optional[Body]) -> str:
+    reporter = game.entity(reporter_id)
+    who = BOLD + reporter.color + reporter.name + RESET
+    if body is None:
+        return BOLD + YELLOW + "Emergency button" + RESET + GRAY + " pressed by " + RESET + who + GRAY + "." + RESET
+    victim = game.entity(body.victim_id)
+    # The room stays secret: the reporter has to say where in the chat.
+    return (BOLD + victim.color + body.victim_name + RESET + " body found." + GRAY + " Reported by " + RESET
+            + who + GRAY + "." + RESET)
+
+
+def vote_choice(game: Game, key: str, actor: Player) -> str:
+    """One ballot entry: key, colored name (@ marks you), and whether they voted yet."""
+    you = " @" if actor.id == game.player_id and game.config.play_mode == "game" else ""
+    status = GREEN + "VOTED  " + RESET if actor.id in game.meetings.votes else YELLOW + "WAITING" + RESET
+    return (f" {BOLD}{WHITE}[{key.upper()}]{RESET} {actor.color}●{RESET} "
+            f"{BOLD if you else ''}{actor.color}{actor.name + you:<9}{RESET}{status}")
+
+
 def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: str = "",
                    size: Optional[tuple[int, int]] = None) -> str:
     size = size or terminal_size()
-    content = [(BOLD + game.entity(body.victim_id).color + body.victim_name + RESET + " body found.")
-               if body else "No body was reported."]
-    content += [BOLD + "Who should be ejected? (1-9 / A-C)" + RESET]
-    choices = []
-    for key, entity_id in zip(VOTE_KEYS, game.alive_ids()):
-        actor = game.entity(entity_id)
-        suffix = " @" if entity_id == game.player_id and game.config.play_mode == "game" else ""
-        voted = entity_id in game.meetings.votes
-        status = GREEN + "VOTED" if voted else YELLOW + "WAITING"
-        choices.append(f" {BOLD}[{key.upper()}]{RESET} {actor.color}{actor.name + suffix:<8}{RESET}"
-                       f"  {status}{RESET}")
+    inner = 55
+    width = inner - 2
+    meetings = game.meetings
+    alive = [game.entity(entity_id) for entity_id in game.alive_ids()]
+    voted = sum(actor.id in meetings.votes for actor in alive)
+    remaining = math.ceil(meetings.remaining)
+    clock_color = RED if meetings.remaining <= 10 else YELLOW
+    clock = f"{clock_color}{BOLD}{remaining:>2}s{RESET}"
+    tally = f"{GRAY}{voted}/{len(alive)} voted{RESET}"
+    bar_width = width - 4 - display_width(tally) - 3
+    timer = clock + " " + progress_bar(meetings.remaining / max(1e-9, meetings.duration), bar_width) + "  " + tally
+
+    content = [meeting_reason(game, reporter_id, body), timer, None,
+               BOLD + WHITE + "Who should be ejected?" + RESET]
+    choices = [vote_choice(game, key, actor) for key, actor in zip(VOTE_KEYS, alive)]
     for index in range(0, len(choices), 2):
-        content.append(fit_line(choices[index], 26, pad=True)
+        content.append(fit_line(choices[index], 27, pad=True)
                        + (choices[index + 1] if index + 1 < len(choices) else ""))
-    content.append(f"{BOLD}[0]{RESET} Skip vote | No vote at timeout = Skip")
-    if prompt:
-        content.append(prompt)
-    content.append("World paused | T chat | Q / Esc quit")
-    title = f" EMERGENCY MEETING | {math.ceil(game.meetings.remaining)}s "
-    lines = [BOLD + RED + "╔" + title.center(55, "═") + "╗" + RESET]
-    lines += [RED + "║ " + RESET + fit_line(line, 53, pad=True) + RED + " ║" + RESET
-              for line in content]
-    lines.append(RED + "╚" + "═" * 55 + "╝" + RESET)
+    dead = [actor for actor in game.players if not actor.alive]
+    if dead:
+        content.append(GRAY + " ✕ Dead: " + ", ".join(actor.name for actor in dead) + RESET)
+    content.append(None)
+    content.append(f" {BOLD}{WHITE}[0]{RESET} Skip vote  {GRAY}· no vote at timeout = skip{RESET}")
+    if game.player_id in meetings.votes:
+        choice = meetings.votes[game.player_id]
+        target = (game.entity(choice).color + game.name_of(choice) + RESET) if choice else GRAY + "Skip" + RESET
+        content.append(" " + GREEN + BOLD + "✓ Your vote: " + RESET + target
+                       + GRAY + "  · waiting for the others" + RESET)
+    elif prompt:
+        content.append(" " + prompt)
+    else:
+        content.append(" " + GRAY + "Pick a key to vote. Talk first: T or Tab chat." + RESET)
+    content.append(GRAY + " 1-9/A-C vote · 0 skip · T/Tab chat · Q/Esc quit" + RESET)
+
+    title = " EMERGENCY MEETING "
+    lines = [RED + "╭─" + BOLD + title + RESET + RED + "─" * (inner - len(title) - 1) + "╮" + RESET]
+    for line in content:
+        if line is None:
+            lines.append(RED + "├" + "─" * inner + "┤" + RESET)
+        else:
+            lines.append(RED + "│ " + RESET + fit_line(line, width, pad=True) + RED + " │" + RESET)
+    lines.append(RED + "╰" + "─" * inner + "╯" + RESET)
     return centered_screen(lines, size)
 
 
@@ -806,26 +844,60 @@ def render_vote_result(
     game: Game,
     ejected: Optional[str],
     counts: dict[Optional[str], int],
+    seconds_left: Optional[float] = None,
 ) -> str:
-    lines = [BOLD + CYAN + "╔" + " VOTING RESULTS ".center(54, "═") + "╗" + RESET, ""]
-    for entity_id, count in sorted(counts.items(), key=lambda item: item[1], reverse=True):
-        name = "Skip" if entity_id is None else game.name_of(entity_id)
-        lines.append(f"  {name:<16} {YELLOW}{'●' * count}{RESET}  {count}")
-    lines.append("")
-    if ejected is None:
-        lines.append(BOLD + "  Tie or skip majority. Nobody was ejected." + RESET)
-    else:
-        role_text = ""
-        if ejected != game.player_id:
-            role_text = " They were the impostor." if game.npc(ejected).role == "impostor" else " They were not the impostor."
-        actor = game.entity(ejected)
-        lines.append("  " + BOLD + actor.color + actor.name + RESET
-                     + BOLD + f" was ejected.{role_text}" + RESET)
-    lines += ["", DIM + ("  Simulation resumes automatically." if game.config.play_mode == "simulation"
-                          else "  Press any key to continue.") + RESET]
-    lines.append(CYAN + "╚" + "═" * 54 + "╝" + RESET)
-    return centered_screen(lines)
+    """Ballot tally as bars, then who left the ship (or why nobody did)."""
+    inner = 55
+    width = inner - 2
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0] is None, game.name_of(item[0]) if item[0] else ""))
+    top = max(counts.values(), default=0)
+    leaders = [target for target, count in ranked if count == top]
+    rows = []
+    for target, count in ranked:
+        if target is None:
+            label = GRAY + "○ Skip" + RESET
+        else:
+            actor = game.entity(target)
+            label = BOLD + actor.color + "● " + actor.name + RESET
+        if target == ejected and ejected is not None:
+            tag = RED + BOLD + " ◀ ejected" + RESET
+        elif ejected is None and count == top and len(leaders) > 1:
+            tag = YELLOW + " ◀ tie" + RESET
+        else:
+            tag = ""
+        # One dot per vote.
+        bar = (GRAY if target is None else YELLOW) + " ".join("●" * count) + RESET
+        rows.append(fit_line(label, 11, pad=True) + bar + f"  {BOLD}{count}{RESET}" + tag)
 
+    impostors = sum(actor.alive and actor.role == "impostor" for actor in game.players)
+    remaining = (f"{impostors} impostor{'s' if impostors != 1 else ''} remain{'s' if impostors == 1 else ''}."
+                 if impostors else "No impostors remain.")
+    if ejected is None:
+        names = [("Skip" if target is None else game.name_of(target)) for target in leaders]
+        why = (f"Tie: {', '.join(names)} ({top} each)." if len(leaders) > 1
+               else "Most players skipped." if leaders == [None] else "Not enough votes.")
+        outcome = [BOLD + WHITE + "Nobody was ejected." + RESET, GRAY + why + RESET]
+    else:
+        actor = game.entity(ejected)
+        who = "You were" if ejected == game.player_id else "They were"
+        verdict = "the impostor." if actor.role == "impostor" else "not the impostor."
+        outcome = [BOLD + actor.color + actor.name + RESET + BOLD + " was ejected." + RESET,
+                   (RED if actor.role == "impostor" else GRAY) + f"{who} {verdict}" + RESET
+                   + GRAY + f"  {remaining}" + RESET]
+    left = f" in {math.ceil(seconds_left)}s" if seconds_left is not None else ""
+    if game.config.play_mode == "simulation":
+        hint = f"Simulation resumes automatically{left}."
+    else:
+        hint = "Press any key to continue" + (f" · back to the ship{left}" if left else ".")
+
+    title = " VOTING RESULTS "
+    lines = [CYAN + "╭─" + BOLD + title + RESET + CYAN + "─" * (inner - len(title) - 1) + "╮" + RESET]
+    lines += [CYAN + "│ " + RESET + fit_line(row, width, pad=True) + CYAN + " │" + RESET for row in rows]
+    lines.append(CYAN + "├" + "─" * inner + "┤" + RESET)
+    lines += [CYAN + "│ " + RESET + fit_line(line, width, pad=True) + CYAN + " │" + RESET
+              for line in outcome + [DIM + hint + RESET]]
+    lines.append(CYAN + "╰" + "─" * inner + "╯" + RESET)
+    return centered_screen(lines)
 
 def render_end(game: Game) -> str:
     won = game.outcome == "victory"

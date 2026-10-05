@@ -172,7 +172,7 @@ class SimulationModeTests(unittest.TestCase):
         self.assertEqual(game.outcome_reason, "Simulation stopped.")
 
     def test_simulation_meeting_deadline_skips_without_npc_votes(self):
-        game = Game(config=GameConfig(play_mode="simulation"))
+        game = Game(config=GameConfig(play_mode="simulation", vote_result_seconds=0.8))
         game.player_pos = EMERGENCY_POS
         self.assertTrue(game.call_emergency(game.player_id))
         terminal = Mock()

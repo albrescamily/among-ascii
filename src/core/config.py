@@ -44,6 +44,7 @@ class GameConfig:
     emergencies_per_player: int = 1
     meetings_enabled: bool = True
     voting_seconds: float = 30.0
+    vote_result_seconds: float = 8.0  # how long the tally stays up (any key skips it)
     chat_history: int = 100
     chat_max_length: int = 200
     kills_enabled: bool = True
@@ -103,7 +104,7 @@ class GameConfig:
             raise ValueError("task_win_mode must be player, team, or disabled")
         for name in ("task_seconds", "crew_move_seconds", "impostor_move_seconds", "player_move_seconds",
                      "max_seconds", "event_history", "fps", "vision_radius", "lights_vision_radius",
-                     "voting_seconds", "chat_history", "chat_max_length", "sabotage_seconds", "sabotage_repair_seconds",
+                     "voting_seconds", "vote_result_seconds", "chat_history", "chat_max_length", "sabotage_seconds", "sabotage_repair_seconds",
                      "door_close_seconds", "max_closed_rooms"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")

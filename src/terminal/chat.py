@@ -84,9 +84,15 @@ class ChatView:
             self._anchor = (row.sequence, row.part)
 
     def handle_key(self, game: Game, key: str) -> bool:
-        """Return True to close; text never invokes movement, votes, or Quit."""
-        if key == "escape":
+        """Return True to close; text never invokes movement, votes, or Quit.
+        During voting Tab returns to the ballot; Esc is ignored there because Esc on
+        the voting screen quits the game. Outside meetings Esc closes and Tab jumps
+        to the newest message."""
+        meeting = bool(game.pending_meeting)
+        if key == ("\t" if meeting else "escape"):
             return True
+        if key == "escape":
+            return False
         if key == "\t":
             self.latest()
         elif key in ("up", "down", "pageup", "pagedown"):
@@ -143,7 +149,8 @@ class ChatView:
             row = rows[end - 1]
             self._anchor = (row.sequence, row.part)
             unread = game.chat.sequence - self._seen_sequence
-            label = YELLOW + (f"{unread} new | Tab latest" if unread else "Reading history") + RESET
+            latest = "↓ latest" if game.pending_meeting else "Tab latest"
+            label = YELLOW + (f"{unread} new | {latest}" if unread else "Reading history") + RESET
         else:
             self._anchor, self._seen_sequence = None, game.chat.sequence
             label = ""  # At the newest message there is nothing to report.
@@ -296,7 +303,8 @@ def render_chat(game: Game, view: ChatView, size: tuple[int, int] | None = None)
         return CYAN + "│ " + RESET + fit_line(text, width, pad=True) + CYAN + " │" + RESET
 
     separator = CYAN + "├" + "─" * inner + "┤" + RESET
-    back = "Esc voting" if game.pending_meeting else "Esc back"
+    back = "Tab voting" if game.pending_meeting else "Esc back"
+    latest = "" if game.pending_meeting else "  ·  Tab latest"
     alive = sum(actor.alive for actor in game.players)
     audience = GRAY + f"To everyone · {alive} alive" + RESET
     lines = [CYAN + "╭─" + BOLD + " BROADCAST CHAT " + RESET + CYAN + "─" * max(0, inner - 17) + "╮" + RESET]
@@ -317,7 +325,7 @@ def render_chat(game: Game, view: ChatView, size: tuple[int, int] | None = None)
         label = view.feedback_color + view.feedback + RESET if view.feedback else author
         lines.append(row(split_line(label, count, width)))
         lines += [row(line) for line in composer_lines(view, width, draft_height)]
-        lines.append(row(GRAY + f"Enter send  ·  {back}  ·  Tab latest  ·  ←/→ edit" + RESET))
+        lines.append(row(GRAY + f"Enter send  ·  {back}{latest}  ·  ←/→ edit" + RESET))
     else:
         reason = ("You were eliminated. You can still read messages." if not game.player_alive
                   else "Spectator mode. Follow the conversation here." if game.config.play_mode == "simulation"
@@ -325,6 +333,6 @@ def render_chat(game: Game, view: ChatView, size: tuple[int, int] | None = None)
                   else "Messages can be sent only during voting.")
         lines.append(row(YELLOW + BOLD + "Read only" + RESET))
         lines += [row(reason)] + [row("")] * (draft_height - 1)
-        lines.append(row(GRAY + f"{back}  ·  Tab latest" + RESET))
+        lines.append(row(GRAY + f"{back}{latest}" + RESET))
     lines.append(CYAN + "╰" + "─" * inner + "╯" + RESET)
     return centered_screen(lines, size)
