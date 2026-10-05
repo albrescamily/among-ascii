@@ -12,13 +12,31 @@ class MeetingSystem:
         self.pending: Optional[tuple[str, Optional[Body]]] = None
         self.number = 0
         self.elapsed = 0.0
-        self.duration = 0.0
+        self.discussion = 0.0  # seconds of talk before ballots open
+        self.duration = 0.0    # discussion + voting
         self.votes: dict[str, Optional[str]] = {}
         self.last_result: Optional[tuple[Optional[str], dict]] = None
 
     @property
     def remaining(self) -> float:
         return max(0.0, self.duration - self.elapsed)
+
+    @property
+    def voting_open(self) -> bool:
+        return self.elapsed + 1e-9 >= self.discussion
+
+    @property
+    def phase(self) -> str:
+        return "voting" if self.voting_open else "discussion"
+
+    @property
+    def phase_remaining(self) -> float:
+        """Seconds left in the current phase (discussion, then voting)."""
+        return self.remaining if self.voting_open else max(0.0, self.discussion - self.elapsed)
+
+    @property
+    def phase_duration(self) -> float:
+        return self.duration - self.discussion if self.voting_open else self.discussion
 
     def call(self, game: "Game", reporter_id: str, body: Optional[Body] = None) -> bool:
         if not game.config.meetings_enabled or self.pending or game.outcome:
@@ -33,7 +51,8 @@ class MeetingSystem:
         game.doors.open_all(game)
         self.pending = (reporter_id, body)
         self.elapsed = 0.0
-        self.duration = game.config.voting_seconds
+        self.discussion = game.config.discussion_seconds
+        self.duration = self.discussion + game.config.voting_seconds
         self.votes.clear()
         self.last_result = None
         if game.npc_system is not None:
@@ -44,13 +63,14 @@ class MeetingSystem:
         game.emit("meeting_called", f"{reporter.name} called a meeting.", actor=reporter_id,
                   data={"body": body.victim_id if body else None,
                         "room": body.room if body else "Cafeteria",
-                        "voting_seconds": self.duration})
+                        "discussion_seconds": self.discussion,
+                        "voting_seconds": self.duration - self.discussion})
         if game.npc_system is not None:
             game.npc_system.greet(game)
         return True
 
     def submit(self, game: "Game", voter_id: str, target: Optional[str]) -> bool:
-        if (not self.pending or game.outcome or voter_id not in game.alive_ids()
+        if (not self.pending or game.outcome or not self.voting_open or voter_id not in game.alive_ids()
                 or voter_id in self.votes or (target is not None and target not in game.alive_ids())):
             return False
         self.votes[voter_id] = target

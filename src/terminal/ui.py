@@ -800,15 +800,19 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
     meetings = game.meetings
     alive = [game.entity(entity_id) for entity_id in game.alive_ids()]
     voted = sum(actor.id in meetings.votes for actor in alive)
-    remaining = math.ceil(meetings.remaining)
-    clock_color = RED if meetings.remaining <= 10 else YELLOW
-    clock = f"{clock_color}{BOLD}{remaining:>2}s{RESET}"
-    tally = f"{GRAY}{voted}/{len(alive)} voted{RESET}"
-    bar_width = width - 4 - display_width(tally) - 3
-    timer = clock + " " + progress_bar(meetings.remaining / max(1e-9, meetings.duration), bar_width) + "  " + tally
+    discussion = not meetings.voting_open
+    remaining = math.ceil(meetings.phase_remaining)
+    clock_color = CYAN if discussion else RED if meetings.remaining <= 10 else YELLOW
+    phase = "TALK" if discussion else "VOTE"
+    clock = f"{clock_color}{BOLD}{phase} {remaining:>2}s{RESET}"
+    tally = (f"{GRAY}ballots soon{RESET}" if discussion else f"{GRAY}{voted}/{len(alive)} voted{RESET}")
+    bar_width = width - display_width(clock) - display_width(tally) - 4
+    timer = (clock + " " + progress_bar(meetings.phase_remaining / max(1e-9, meetings.phase_duration), bar_width)
+             + "  " + tally)
 
-    content = [meeting_reason(game, reporter_id, body), timer, None,
-               BOLD + WHITE + "Who should be ejected?" + RESET]
+    question = (BOLD + CYAN + "Discuss first: who looks suspicious?" + RESET if discussion
+                else BOLD + WHITE + "Who should be ejected?" + RESET)
+    content = [meeting_reason(game, reporter_id, body), timer, None, question]
     choices = [vote_choice(game, key, actor) for key, actor in zip(VOTE_KEYS, alive)]
     for index in range(0, len(choices), 2):
         content.append(fit_line(choices[index], 27, pad=True)
@@ -825,6 +829,9 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
                        + GRAY + "  · waiting for the others" + RESET)
     elif prompt:
         content.append(" " + prompt)
+    elif discussion:
+        content.append(" " + CYAN + f"Voting opens in {remaining}s." + RESET
+                       + GRAY + " Talk now: T or Tab chat." + RESET)
     else:
         content.append(" " + GRAY + "Pick a key to vote. Talk first: T or Tab chat." + RESET)
     content.append(GRAY + " 1-9/A-C vote · 0 skip · T/Tab chat · Q/Esc quit" + RESET)

@@ -29,7 +29,9 @@ class NPCSystem:
         game.rng.shuffle(voters)
         for index, actor_id in enumerate(voters):
             fraction = 0.15 + 0.60 * (index + game.rng.uniform(0.1, 0.9)) / len(voters)
-            self.meeting_vote_times[actor_id] = game.meetings.duration * fraction
+            # Ballots only open after the discussion; spread votes across the voting window.
+            voting = game.meetings.duration - game.meetings.discussion
+            self.meeting_vote_times[actor_id] = game.meetings.discussion + voting * fraction
 
     def greet(self, game: "Game") -> None:
         """Greet once per voting session; gameplay chat is read-only."""

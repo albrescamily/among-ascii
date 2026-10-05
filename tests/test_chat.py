@@ -78,7 +78,7 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(len(game.chat.messages), 20)
 
     def test_chat_permissions_follow_voting_and_preserve_history(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False, voting_seconds=1))
+        game = Game(config=GameConfig(npc_ai_enabled=False, voting_seconds=1, discussion_seconds=0))
         action = Action("chat", message="Meeting message")
         before = game.events.sequence
         for actor in game.players:
@@ -120,7 +120,7 @@ class ChatTests(unittest.TestCase):
 
 class VotingTimerTests(unittest.TestCase):
     def test_builtin_votes_change_status_during_meeting_and_match_results(self):
-        game = Game(config=GameConfig(voting_seconds=30, seed=7))
+        game = Game(config=GameConfig(voting_seconds=30, seed=7, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         self.assertEqual(game.meetings.votes, {})
         positions = [actor.pos for actor in game.players]
@@ -176,7 +176,7 @@ class VotingTimerTests(unittest.TestCase):
         self.assertEqual(game.meetings.votes, {})
 
     def test_timeout_skips_missing_votes_and_freezes_world_clocks(self):
-        game = Game(config=GameConfig(voting_seconds=0.3, npc_ai_enabled=False))
+        game = Game(config=GameConfig(voting_seconds=0.3, npc_ai_enabled=False, discussion_seconds=0))
         game.meetings.call(game, 'cyan')
         positions = [actor.pos for actor in game.players]
         cooldown = game.kill_cooldown
@@ -200,6 +200,44 @@ class VotingTimerTests(unittest.TestCase):
                             ("chat_history", 0), ("chat_max_length", -1), ("chat_history", 2.5)):
             with self.assertRaises(ValueError):
                 GameConfig.from_dict({name: value})
+
+
+class DiscussionPhaseTests(unittest.TestCase):
+    def test_ballots_open_only_after_the_discussion(self):
+        game = Game(config=GameConfig(discussion_seconds=10, voting_seconds=20, seed=7, player_role="crew"))
+        game.meetings.call(game, "cyan")
+        self.assertEqual(game.meetings.phase, "discussion")
+        self.assertEqual(game.meetings.remaining, 30)
+        self.assertFalse(game.apply_action("cyan", Action("vote", "red")))
+        game.tick(9.5)
+        self.assertEqual(game.meetings.votes, {})  # NPCs wait too
+        meeting = ANSI_SGR.sub("", render_meeting(game, "cyan", None, size=(80, 24)))
+        self.assertIn("TALK", meeting)
+        self.assertIn("Voting opens in 1s", meeting)
+        self.assertIn("Discussion 00:01", ANSI_SGR.sub("", render_chat(game, ChatView(), (100, 30))))
+        game.tick(0.5)
+        self.assertEqual(game.meetings.phase, "voting")
+        self.assertTrue(game.apply_action("cyan", Action("vote", "red")))
+        self.assertIn("VOTE", ANSI_SGR.sub("", render_meeting(game, "cyan", None, size=(80, 24))))
+        for _ in range(21):
+            game.tick(1)
+        self.assertIsNone(game.pending_meeting)  # discussion + voting elapsed
+        self.assertEqual(game.meetings.last_result[1].get("red", 0) >= 1, True)
+
+    def test_vote_keys_during_discussion_explain_the_wait(self):
+        game = Game(config=GameConfig(discussion_seconds=10, voting_seconds=1, vote_result_seconds=0.1))
+        game.meetings.call(game, "cyan")
+        keys = iter([["2"]])  # "2" is Red's ballot key, pressed while still talking
+        term = Mock()
+        term.read_keys.side_effect = lambda: next(keys, [])
+        with patch.object(game.meetings, "bot_vote", return_value=None), \
+                patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.5)), \
+                patch("src.terminal.runtime.time.sleep"):
+            conduct_meeting(term, game)
+        screens = [ANSI_SGR.sub("", call.args[0]) for call in term.draw.call_args_list]
+        self.assertTrue(any("Voting opens in" in screen for screen in screens))
+        # NPCs abstain here, so a Red vote could only have come from the early key press.
+        self.assertNotIn("red", game.meetings.last_result[1])
 
 
 class ChatLayoutTests(unittest.TestCase):
@@ -245,7 +283,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertIn("Read only", render_chat(game, view))
 
     def test_chat_and_meeting_screens_fit_without_hiding_controls(self):
-        game = Game()
+        game = Game(config=GameConfig(discussion_seconds=0))
         body = Body("red", "Red", (1, 1), "Navigation", 0, ["blue", "green"])
         game.meetings.call(game, "cyan", body)
         initial = render_meeting(game, "cyan", body, size=(60, 20))
@@ -302,7 +340,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertGreaterEqual(tick.call_count, 2)
 
     def test_meeting_chat_does_not_pause_deadline_or_treat_text_as_votes(self):
-        game = Game(config=GameConfig(voting_seconds=1, vote_result_seconds=3))
+        game = Game(config=GameConfig(voting_seconds=1, vote_result_seconds=3, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         term = Mock()
         term.read_keys.side_effect = [["t", *"Q123Hello", "\r"], []]
@@ -316,7 +354,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertEqual(game.elapsed, 0)
 
     def test_switching_between_voting_and_chat_preserves_draft_and_vote(self):
-        game = Game(config=GameConfig(voting_seconds=2))
+        game = Game(config=GameConfig(voting_seconds=2, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         term = Mock()
         keys = iter([["t", *"Q123Hello"], ["\t"], ["\t"], ["\r", "\t"],

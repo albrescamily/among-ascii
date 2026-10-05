@@ -293,7 +293,9 @@ def render_chat(game: Game, view: ChatView, size: tuple[int, int] | None = None)
     if sidebar:
         crew = crew_sidebar(game, history_height)
         history = [line + DARK + " │ " + RESET + side for line, side in zip(history, crew)]
-    if game.pending_meeting:
+    if game.pending_meeting and not game.meetings.voting_open:
+        status = CYAN + BOLD + "Discussion " + timestamp(math.ceil(game.meetings.phase_remaining)) + RESET
+    elif game.pending_meeting:
         color = RED if game.meetings.remaining <= 10 else YELLOW
         status = color + BOLD + "Voting " + timestamp(math.ceil(game.meetings.remaining)) + RESET
     else:

@@ -13,6 +13,7 @@ MENU_LIMITS = {
     "player_count": (4, len(COLORS)),
     "kill_cooldown": (0, 60),
     "tasks_per_player": (0, 24),
+    "discussion_seconds": (0, 120),
     "voting_seconds": (5, 120),
 }
 
@@ -43,6 +44,7 @@ class GameConfig:
     report_delay: float = 0.6
     emergencies_per_player: int = 1
     meetings_enabled: bool = True
+    discussion_seconds: float = 15.0  # meeting opens with talk only; ballots open afterwards
     voting_seconds: float = 30.0
     vote_result_seconds: float = 8.0  # how long the tally stays up (any key skips it)
     chat_history: int = 100
@@ -109,7 +111,7 @@ class GameConfig:
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("kill_radius", "kill_cooldown", "initial_kill_cooldown", "post_meeting_kill_cooldown",
-                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown", "door_cooldown",
+                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown", "door_cooldown", "discussion_seconds",
                      "initial_door_cooldown"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")

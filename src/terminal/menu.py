@@ -10,7 +10,8 @@ from .text import MIN_COLUMNS, MIN_ROWS, centered_screen, fit_line, terminal_siz
 
 MODES = ("game", "simulation")
 MODE_NAMES = {"game": "Game", "simulation": "Simulation"}
-MENU_ITEMS = ("play_mode", "player_count", "kill_cooldown", "tasks_per_player", "voting_seconds",
+MENU_ITEMS = ("play_mode", "player_count", "kill_cooldown", "tasks_per_player", "discussion_seconds",
+              "voting_seconds",
               "test_mode", "allow_god_view", "play", "quit")
 
 
@@ -25,6 +26,7 @@ def normalize_settings(config: GameConfig) -> GameConfig:
     changes = {"player_count": players,
                "impostor_count": min(config.impostor_count, (players - 1) // 2),
                "tasks_per_player": int(bounded_value("tasks_per_player", config.tasks_per_player)),
+               "discussion_seconds": bounded_value("discussion_seconds", config.discussion_seconds),
                "voting_seconds": bounded_value("voting_seconds", config.voting_seconds)}
     if cooldown != config.kill_cooldown:
         changes.update(kill_cooldown=cooldown, initial_kill_cooldown=cooldown,
@@ -52,6 +54,7 @@ def render_setup(config: GameConfig, selected: int = 0,
         setting_row("Total players", config.player_count),
         setting_row("Impostor cooldown", config.kill_cooldown, "s"),
         setting_row("Tasks per crewmate", config.tasks_per_player),
+        setting_row("Discussion time", config.discussion_seconds, "s"),
         setting_row("Voting time", config.voting_seconds, "s"),
         toggle_row("Test mode", config.test_mode, config.play_mode == "game"),
         (f"{'Allow God view':<19}   On {GRAY}(test mode){RESET}" if config.test_mode and config.play_mode == "game"
@@ -104,6 +107,8 @@ def adjust_setting(config: GameConfig, selected: int, direction: int) -> GameCon
         return config  # Locked on: the Test mode always allows the God view.
     if option in ("test_mode", "allow_god_view") and config.play_mode == "game":
         return replace(config, **{option: not getattr(config, option)})
+    if option == "discussion_seconds":
+        return replace(config, discussion_seconds=bounded_value(option, config.discussion_seconds + 5 * direction))
     if option == "voting_seconds":
         return replace(config, voting_seconds=bounded_value(option, config.voting_seconds + 5 * direction))
     return config
