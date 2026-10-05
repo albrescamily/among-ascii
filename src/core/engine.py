@@ -31,7 +31,7 @@ class Game:
             # Sandbox: NPCs are idle dummies, nothing ends the round, abilities start ready.
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="disabled", initial_kill_cooldown=0.0,
-                                  initial_sabotage_cooldown=0.0)
+                                  initial_sabotage_cooldown=0.0, initial_door_cooldown=0.0)
         self.rng = random.Random(self.config.seed)
         self.world = ShipMap()
         self.grid = self.world.grid
@@ -59,7 +59,7 @@ class Game:
         self.tasks = TaskSystem(self)
         self.vents = VentSystem()
         self.sabotage = SabotageSystem(self)
-        self.doors = DoorSystem()
+        self.doors = DoorSystem(self.config.initial_door_cooldown)
         self.npc_system = NPCSystem() if self.config.play_mode == "game" and not self.test_mode else None
         self.meetings = MeetingSystem()
         self.bodies: list[Body] = []
@@ -389,6 +389,7 @@ class Game:
         self.sabotage.cooldown = 0.0
         self.doors.open_all(self)
         self.doors.cooldowns.clear()
+        self.doors.initial_cooldown = 0.0
         self.bodies.clear()
         for actor in self.players:
             actor.alive, actor.vent_id, actor.kill_clock = True, None, 0.0

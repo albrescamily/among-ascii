@@ -6,8 +6,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from .core.models import Player, Pos
 from .core.tasks import TASK_POSITIONS
-from .core.world import VENT_IDS
+from .core.world import VENT_IDS, room_at
 from .core.sabotage import PANELS
+from .core.doors import DOOR_ROOMS
+
+ROOM_IDS = {name: room_id for room_id, name in DOOR_ROOMS.items()}
 if TYPE_CHECKING:
     from .core.engine import Game
 
@@ -109,6 +112,18 @@ class NPCSystem:
                     game.move_entity(actor.id, *game.rng.choice(free))
                 actor.path = []
 
+    def trap(self, game: "Game", impostor: Player) -> None:
+        """Close the room's doors when a crewmate in sight shares it with the impostor.
+        Door rules (room limit, cooldown, no doors during sabotage) still apply."""
+        room = room_at(impostor.pos)
+        room_id = ROOM_IDS.get(room)
+        if room_id is None or impostor.vent_id is not None or room_id in game.doors.closed:
+            return
+        if any(other.alive and other.role == "crew" and other.vent_id is None
+               and room_at(other.pos) == room and game.can_see(impostor.id, other.pos)
+               for other in game.players):
+            game.doors.close(game, impostor.id, room_id)
+
     def tick(self, game: "Game") -> None:
         if not game.config.npc_ai_enabled:
             return
@@ -116,6 +131,9 @@ class NPCSystem:
             impostor = next((a for a in game.npcs if a.alive and a.role == "impostor"), None)
             if impostor is not None:
                 game.sabotage.start(game, impostor.id, game.rng.choice(tuple(PANELS)))
+        for actor in game.npcs:
+            if actor.alive and actor.role == "impostor":
+                self.trap(game, actor)
         for actor in game.npcs:
             if not actor.alive:
                 continue

@@ -176,7 +176,7 @@ VIEW_COLORS = {"player": CYAN, "god": YELLOW, "minimap": GREEN}
 def mode_label(game: Game, view_mode: str) -> str:
     """Play mode, plus which view is open; Simulation only has the spectator view."""
     if game.config.play_mode == "simulation":
-        return "SIMULATION"
+        return "SIMULATION / MINI MAP" if view_mode == "minimap" else "SIMULATION"
     mode = "TEST" if game.test_mode else "GAME"
     return f"{mode} / {VIEW_NAMES[view_mode]}"
 
@@ -576,7 +576,7 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
 
 def minimap_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
     """Mini map: the whole ship and your own position, but no other players or bodies."""
-    if game.player_alive and game.player_pos == pos:
+    if game.player_alive and game.player_pos == pos and game.config.play_mode != "simulation":
         glyph = "▣" if game.player.vent_id is not None else "@"
         return BOLD + game.player.color + glyph + RESET
     return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW)
@@ -637,7 +637,8 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     panel = top + [panel_heading(title, width)] + note
     panel += [manifest_entry(game, actor, width) for actor in roster[page * page_size:(page + 1) * page_size]]
     panel += [""] + status
-    controls = ([("WASD", "camera"), ("F/G/J/L", "sabotage"), ("[ ]", "pages"), ("Z", "zoom"), ("P", "panel")]
+    controls = ([("WASD", "camera"), ("F/G/J/L", "sabotage"), ("TAB", "map/doors"), ("[ ]", "pages"),
+                 ("Z", "zoom"), ("P", "panel")]
                 if game.config.play_mode == "simulation"
                 else MOVE_CONTROLS + [("CAPS", "player view"), ("TAB", "map"), ("Z", "zoom"), ("P", "panel")])
     last = game.chat.messages[-1] if game.chat.messages else None
@@ -653,19 +654,33 @@ MINIMAP_LEGEND = ["@ you", "◆ your task  ◇ task", "! sabotage  ◉ emergency
                   "▣ vent", "-- open door  ++ closed door"]
 
 
+def door_actor(game: Game) -> Optional[Player]:
+    """Who closes doors: the local impostor, or a living impostor for the simulation spectator."""
+    if game.config.play_mode == "simulation":
+        return next((actor for actor in game.players if actor.alive and actor.role == "impostor"), None)
+    return game.player if game.player.role == "impostor" and game.player_alive else None
+
+
 def doors_panel(game: Game, width: int) -> list[str]:
-    """Impostor door controls on the mini map: number keys lock a room's doors."""
+    """Door controls on the mini map: number keys lock a room's doors."""
     doors = game.doors
     limit = game.config.max_closed_rooms
+    actor = door_actor(game)
     lines = [panel_heading(f"DOORS {doors.closed_count}/{limit} ROOMS CLOSED", width, RED)]
+    if actor is None:
+        lines.append(GRAY + " No living impostor." + RESET)
+    elif game.config.play_mode == "simulation":
+        lines.append(GRAY + f" Acting as {actor.name} (impostor)." + RESET)
     if game.sabotage.kind:
         lines.append(GRAY + " Locked during sabotage." + RESET)
+    elif doors.initial_cooldown > 1e-9:
+        lines.append(YELLOW + f" Doors ready in {math.ceil(doors.initial_cooldown - 1e-9)}s." + RESET)
     for key, room_id in DOOR_KEYS.items():
         if room_id in doors.closed:
             state = RED + BOLD + f"++ {math.ceil(doors.closed[room_id] - 1e-9)}s" + RESET
         elif doors.cooldowns.get(room_id, 0.0) > 1e-9:
             state = GRAY + f"wait {math.ceil(doors.cooldowns[room_id] - 1e-9)}s" + RESET
-        elif doors.refusal(game, game.player_id, room_id):
+        elif actor is None or doors.refusal(game, actor.id, room_id):
             state = GRAY + "--" + RESET
         else:
             state = GREEN + "-- ready" + RESET
@@ -679,14 +694,20 @@ def render_minimap(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     size = size or terminal_size()
     layout = screen_layout(game, size, observer=True)
     width = layout.panel_width or 32
-    impostor = game.player.role == "impostor" and game.player_alive
-    role = (doors_panel(game, width) + impostor_panel(game, width, game.visible_positions()) if impostor
-            else crew_panel(game, layout, width))
+    simulation = game.config.play_mode == "simulation"
+    if simulation:
+        role = doors_panel(game, width)
+    elif door_actor(game) is not None:
+        role = doors_panel(game, width) + impostor_panel(game, width, game.visible_positions())
+    else:
+        role = crew_panel(game, layout, width)
     legend = [panel_heading("LEGEND", width)] + [GRAY + " " + line + RESET for line in MINIMAP_LEGEND]
     panel = stack_sections([test_panel(game, width), sabotage_panel(game, width), role, legend], layout.height, 0)
+    controls = ([("WASD", "camera"), ("1-7", "doors"), ("TAB", "close map"), ("Z", "zoom"), ("P", "panel")]
+                if simulation else
+                MOVE_CONTROLS + [("TAB", "close map"), *god_view_key(game), ("Z", "zoom"), ("P", "panel")])
     footer = [
-        vent_hint(game) or " " + keys_line(MOVE_CONTROLS + [("TAB", "close map"), *god_view_key(game),
-                                                            ("Z", "zoom"), ("P", "panel")]),
+        (" " + keys_line(controls)) if simulation else vent_hint(game) or " " + keys_line(controls),
         align_status(" " + GRAY + "Players are hidden on the map." + RESET,
                      keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
@@ -730,6 +751,7 @@ def render_help(game: Game) -> str:
                    "[ / ]         previous / next crew page",
                    "F / G / J     sabotage Reactor / O2 / Admin",
                    "L             sabotage Lights (crew vision)",
+                   "Tab, then 1-7 close a room's doors",
                    f"Sabotage: {game.config.sabotage_seconds:g}s, cooldown {game.config.sabotage_cooldown:g}s.",
                    "Crew has no automatic repair behavior.",
                    "T             broadcast chat (read only)",

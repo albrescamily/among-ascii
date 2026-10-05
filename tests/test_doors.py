@@ -12,7 +12,7 @@ from src.terminal.ui import map_cell, render_minimap
 
 def make_game(**overrides):
     options = dict(npc_ai_enabled=False, kills_enabled=False, player_role="impostor",
-                   task_win_mode="disabled", initial_sabotage_cooldown=0)
+                   task_win_mode="disabled", initial_sabotage_cooldown=0, initial_door_cooldown=0)
     options.update(overrides)
     return Game(config=GameConfig(**options))
 
@@ -86,6 +86,56 @@ class DoorTests(unittest.TestCase):
             self.assertFalse(any(actor.pos in cells for actor in game.npcs))
 
 
+class InitialCooldownTests(unittest.TestCase):
+    def test_doors_wait_ten_seconds_at_the_start(self):
+        game = make_game(initial_door_cooldown=GameConfig().initial_door_cooldown)
+        self.assertEqual(game.config.initial_door_cooldown, 10)
+        self.assertFalse(close(game, "medbay"))
+        self.assertIn("ready in 10s", game.doors.refusal(game, game.player_id, "medbay"))
+        self.assertIn("Doors ready in 10s", ANSI_SGR.sub("", render_minimap(game, (130, 42))))
+        game.tick(9.9)
+        self.assertFalse(close(game, "medbay"))
+        game.tick(0.1)
+        self.assertTrue(close(game, "medbay"))
+
+    def test_test_mode_starts_with_doors_ready(self):
+        game = make_game(test_mode=True, initial_door_cooldown=10)
+        self.assertTrue(close(game, "medbay"))
+
+
+class NpcDoorTests(unittest.TestCase):
+    def setup_medbay(self, **overrides):
+        game = make_game(npc_ai_enabled=True, player_role="crew", initial_sabotage_cooldown=1000, **overrides)
+        impostor = game.entity(game.impostor_id)
+        victim = next(actor for actor in game.npcs if actor.role == "crew")
+        impostor.pos, victim.pos = (30, 18), (34, 18)
+        return game, impostor, victim
+
+    def test_npc_impostor_traps_a_crewmate_in_its_room(self):
+        game, impostor, victim = self.setup_medbay()
+        game.tick(0.01)
+        self.assertEqual(list(game.doors.closed), ["medbay"])
+
+    def test_no_trap_without_a_victim_in_sight_or_during_sabotage(self):
+        game, impostor, victim = self.setup_medbay()
+        victim.pos = (49, 15)  # hallway, out of MedBay
+        game.tick(0.01)
+        self.assertFalse(game.doors.closed)
+        game, impostor, victim = self.setup_medbay()
+        game.sabotage.cooldown = 0
+        self.assertTrue(game.sabotage.start(game, impostor.id, "lights"))
+        game.tick(0.01)
+        self.assertFalse(game.doors.closed)
+
+    def test_test_mode_npcs_stay_idle(self):
+        game = make_game(test_mode=True, player_role="crew")
+        impostor = game.entity(game.impostor_id)
+        victim = next(actor for actor in game.npcs if actor.role == "crew")
+        impostor.pos, victim.pos = (30, 18), (34, 18)
+        game.tick(0.01)
+        self.assertFalse(game.doors.closed)
+
+
 class DoorControlsTests(unittest.TestCase):
     def run_keys(self, game, keys):
         term = Mock()
@@ -101,6 +151,20 @@ class DoorControlsTests(unittest.TestCase):
         self.run_keys(game, [[key], ["\t"], [key], ["q"]])
         # Outside the map the number did nothing; inside it, MedBay closed.
         self.assertEqual(list(game.doors.closed), ["medbay"])
+
+    def test_simulation_spectator_closes_doors_through_a_living_impostor(self):
+        game = make_game(play_mode="simulation")
+        key = next(k for k, room in DOOR_KEYS.items() if room == "storage")
+        self.run_keys(game, [[key], ["\t"], [key], ["q"]])
+        self.assertEqual(list(game.doors.closed), ["storage"])
+        screen = ANSI_SGR.sub("", render_minimap(game, (130, 42)))
+        self.assertIn("MODE SIMULATION / MINI MAP", screen)
+        self.assertIn("Acting as", screen)
+        self.assertNotIn("@", screen.split("MISSION CONTROL")[0].split("FULL MAP")[-1])
+        lonely = make_game(play_mode="simulation", impostor_count=0, player_role="crew")
+        self.run_keys(lonely, [["\t"], [key], ["q"]])
+        self.assertFalse(lonely.doors.closed)
+        self.assertIn("No living impostor", ANSI_SGR.sub("", render_minimap(lonely, (130, 42))))
 
     def test_minimap_lists_numbered_rooms_for_impostors_only(self):
         game = make_game()

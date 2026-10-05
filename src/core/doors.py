@@ -1,5 +1,6 @@
 """Impostor door sabotage: lock a room's doorways for a few seconds."""
 from __future__ import annotations
+import math
 from typing import TYPE_CHECKING, Optional
 from .world import DOORS, Door
 
@@ -20,9 +21,10 @@ def room_doors(room_id: str) -> tuple[Door, ...]:
 
 
 class DoorSystem:
-    def __init__(self) -> None:
+    def __init__(self, initial_cooldown: float = 0.0) -> None:
         self.closed: dict[str, float] = {}    # room id -> seconds until it reopens
         self.cooldowns: dict[str, float] = {}  # room id -> seconds until it can close again
+        self.initial_cooldown = initial_cooldown  # seconds until any door can close
 
     @property
     def closed_count(self) -> int:
@@ -38,6 +40,8 @@ class DoorSystem:
             return "Only a living impostor can close doors."
         if game.sabotage.kind:
             return "Doors cannot be closed during a sabotage."
+        if self.initial_cooldown > 1e-9:
+            return f"Doors ready in {math.ceil(self.initial_cooldown - 1e-9)}s."
         if room_id in self.closed:
             return f"{DOOR_ROOMS[room_id]} doors are already closed."
         if self.cooldowns.get(room_id, 0.0) > 1e-9:
@@ -73,6 +77,7 @@ class DoorSystem:
             self.reopen(game, room_id)
 
     def tick(self, game: "Game", dt: float) -> None:
+        self.initial_cooldown = max(0.0, self.initial_cooldown - dt)
         for room_id in list(self.cooldowns):
             self.cooldowns[room_id] = max(0.0, self.cooldowns[room_id] - dt)
         for room_id in list(self.closed):

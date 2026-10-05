@@ -54,6 +54,7 @@ class GameConfig:
     max_closed_rooms: int = 3
     door_close_seconds: float = 10.0
     door_cooldown: float = 10.0  # per room, after it reopens
+    initial_door_cooldown: float = 10.0  # before any door can be closed
     npc_ai_enabled: bool = True
     end_on_player_death: bool = True
     max_seconds: float = 600.0
@@ -104,7 +105,8 @@ class GameConfig:
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("kill_radius", "kill_cooldown", "initial_kill_cooldown", "post_meeting_kill_cooldown",
-                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown", "door_cooldown"):
+                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown", "door_cooldown",
+                     "initial_door_cooldown"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")
         if self.fps > 120 or self.vision_radius > 100:

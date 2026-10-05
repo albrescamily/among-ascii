@@ -12,7 +12,7 @@ from .menu import configure_game
 from .chat import ChatView, render_chat
 from .text import MIN_COLUMNS, MIN_ROWS, terminal_size, fit_screen
 from .palette import RED, RESET
-from .ui import (render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
+from .ui import (door_actor, render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
                  render_vote_result, screen_layout, camera_origin, VOTE_KEYS, sabotage_alert)
 
 MOVE_KEYS = {
@@ -21,6 +21,19 @@ MOVE_KEYS = {
     "a": (-1, 0), "left": (-1, 0),
     "d": (1, 0), "right": (1, 0),
 }
+
+
+def trigger_doors(game: Game, key: str) -> bool:
+    """Close a room from the mini map, as the local impostor or (simulation) a living one."""
+    actor = door_actor(game)
+    if actor is None:
+        game.message("Doors unavailable: no living impostor.")
+        return False
+    reason = game.doors.refusal(game, actor.id, DOOR_KEYS[key])
+    if reason:
+        game.message(reason)
+        return False
+    return game.apply_action(actor.id, {"kind": "doors", "target": DOOR_KEYS[key]})
 
 
 def trigger_sabotage(game: Game, key: str) -> bool:
@@ -150,7 +163,7 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                     chat_view = None
                 continue
             key = key.lower()
-            if simulation and key in ("e", "r", "k", "v", "1", "2", "\t"):
+            if simulation and key in ("e", "r", "k", "v"):
                 continue
             if key in MOVE_KEYS:
                 if simulation:
@@ -173,12 +186,8 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 if not game.apply_action(game.player_id, "vent"):
                     game.message("Vent unavailable: approach a vent; exits must be clear.")
             elif (minimap_open and key in DOOR_KEYS and game.player.vent_id is None
-                  and game.player.role == "impostor"):
-                reason = game.doors.refusal(game, game.player_id, DOOR_KEYS[key])
-                if reason:
-                    game.message(reason)
-                else:
-                    game.apply_action(game.player_id, {"kind": "doors", "target": DOOR_KEYS[key]})
+                  and (simulation or game.player.role == "impostor")):
+                trigger_doors(game, key)
             elif key in ("1", "2") and game.player.vent_id is not None:
                 connections = game.vents.observe(game, game.player_id)["connections"]
                 index = int(key) - 1
@@ -219,10 +228,10 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 screen = render_chat(game, chat_view)
             elif help_open:
                 screen = render_help(game)
-            elif simulation:
-                screen = render_observer(game)
             elif minimap_open:
                 screen = render_minimap(game)
+            elif simulation:
+                screen = render_observer(game)
             elif god_open:
                 screen = render_observer(game)
             else:
