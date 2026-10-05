@@ -18,6 +18,7 @@ class ChatTests(unittest.TestCase):
         game = Game(config=GameConfig(npc_ai_enabled=False))
         game.entity('red').pos = (0, 0)
         game.entity('blue').alive = False
+        game.meetings.call(game, 'cyan')
         self.assertTrue(game.apply_action('cyan', Action('chat', message='Hello world')))
         for actor in game.players:
             events = game.events.for_player(actor.id)
@@ -41,7 +42,8 @@ class ChatTests(unittest.TestCase):
         self.assertFalse(game.apply_action(ejected, Action("chat", message="ejected")))
 
     def test_safe_bounded_history_and_message_validation(self):
-        game = Game(config=GameConfig(chat_history=2, chat_max_length=20))
+        game = Game(config=GameConfig(chat_history=2, chat_max_length=20, npc_ai_enabled=False))
+        game.meetings.call(game, "cyan")
         for message in ("old", "Hello\nworld", "\x1b[2J text"):
             self.assertTrue(game.chat.send(game, "cyan", message))
         messages = game.chat.snapshot()
@@ -56,26 +58,63 @@ class ChatTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Action.parse(action)
 
-    def test_builtin_bots_greet_once_at_start_and_per_meeting(self):
+    def test_builtin_bots_only_greet_once_per_voting_session(self):
         game = Game(config=GameConfig(kills_enabled=False))
         game.tick(0.1)
-        self.assertEqual(len(game.chat.messages), 11)
-        game.tick(0.1)
-        self.assertEqual(len(game.chat.messages), 11)
+        self.assertEqual(len(game.chat.messages), 0)
+        game.npc_system.greet(game)
+        self.assertEqual(len(game.chat.messages), 0)
         game.entity("red").alive = False
         game.meetings.call(game, "cyan")
+        game.npc_system.greet(game)
         game.tick(0.2)
-        self.assertEqual(len(game.chat.messages), 21)
+        self.assertEqual(len(game.chat.messages), 10)
         self.assertTrue(all(message.text == "Hello world" for message in game.chat.messages))
-        self.assertEqual(sum(message.sender == "red" for message in game.chat.messages), 1)
+        self.assertEqual(sum(message.sender == "red" for message in game.chat.messages), 0)
+        game.meetings.resolve(game, dict.fromkeys(game.alive_ids(), None))
+        game.tick(0.1)
+        self.assertEqual(len(game.chat.messages), 10)
+        game.meetings.call(game, "cyan")
+        self.assertEqual(len(game.chat.messages), 20)
+
+    def test_chat_permissions_follow_voting_and_preserve_history(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False, voting_seconds=1))
+        action = Action("chat", message="Meeting message")
+        before = game.events.sequence
+        for actor in game.players:
+            self.assertFalse(game.chat.send(game, actor.id, "blocked"))
+            self.assertFalse(game.apply_action(actor.id, action))
+        self.assertEqual(game.events.sequence, before)
+        self.assertEqual(game.chat.sequence, 0)
+        self.assertFalse(ChatView.can_send(game))
+        game.meetings.call(game, "cyan")
+        self.assertTrue(ChatView.can_send(game))
+        self.assertTrue(game.apply_action("cyan", "vote"))
+        self.assertTrue(game.apply_action("cyan", action))
+        history = game.chat.snapshot()
+        game.tick(1)
+        self.assertIsNone(game.pending_meeting)
+        self.assertFalse(game.apply_action("cyan", action))
+        self.assertFalse(ChatView.can_send(game))
+        self.assertEqual(game.chat.snapshot(), history)
+        screen = ANSI_SGR.sub("", render_chat(game, ChatView(), (60, 20)))
+        self.assertIn("Read only", screen)
+        self.assertIn("Meeting message", screen)
+        self.assertNotIn("Enter send", screen)
+        game.meetings.call(game, "cyan")
+        self.assertTrue(ChatView.can_send(game))
+        # A deadline also blocks sends before the engine resolves the ballot.
+        game.meetings.elapsed = game.meetings.duration
+        self.assertFalse(game.chat.send(game, "cyan", "too late"))
+        self.assertFalse(ChatView.can_send(game))
 
     def test_new_game_clears_chat_and_preserves_determinism(self):
         game = Game()
-        game.tick(0.1)
+        game.meetings.call(game, "cyan")
         before = game.chat.snapshot()
         game = Game()
         self.assertEqual(game.chat.snapshot(), [])
-        game.tick(0.1)
+        game.meetings.call(game, "cyan")
         self.assertEqual(game.chat.snapshot(), before)
 
 
@@ -165,7 +204,8 @@ class VotingTimerTests(unittest.TestCase):
 
 class ChatTerminalTests(unittest.TestCase):
     def test_composer_preserves_case_backspace_and_blocks_commands(self):
-        game = Game()
+        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game.meetings.call(game, "cyan")
         view = ChatView()
         for key in [*"Hello worldq", "\x08", "\r"]:
             self.assertFalse(view.handle_key(game, key))
@@ -180,6 +220,7 @@ class ChatTerminalTests(unittest.TestCase):
 
     def test_simulation_chat_is_read_only(self):
         game = Game(config=GameConfig(play_mode="simulation"))
+        game.meetings.call(game, "cyan")
         view = ChatView()
         for key in [*"blocked", "\r"]:
             view.handle_key(game, key)
@@ -227,7 +268,7 @@ class ChatTerminalTests(unittest.TestCase):
         view.scroll = 1000
         self.assertIn("Red: Hello world", ANSI_SGR.sub("", render_chat(game, view, (60, 20))))
 
-    def test_live_game_chat_keeps_ticking_and_does_not_execute_typing(self):
+    def test_live_game_chat_is_read_only_and_keeps_ticking(self):
         game = Game(config=GameConfig(npc_ai_enabled=False))
         term = Mock()
         term.read_keys.side_effect = [["t", *"QWERTY", "\r"], ["escape"], ["q"]]
@@ -238,7 +279,9 @@ class ChatTerminalTests(unittest.TestCase):
             play_one(term)
         move.assert_not_called()
         interact.assert_not_called()
-        self.assertEqual(game.chat.messages[-1].text, "QWERTY")
+        self.assertEqual(game.chat.snapshot(), [])
+        self.assertIn("Read only", term.draw.call_args_list[0].args[0])
+        self.assertIn("only during voting", term.draw.call_args_list[0].args[0])
         self.assertGreaterEqual(tick.call_count, 2)
 
     def test_meeting_chat_does_not_pause_deadline_or_treat_text_as_votes(self):

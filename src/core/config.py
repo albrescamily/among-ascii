@@ -31,6 +31,7 @@ class GameConfig:
     impostor_move_seconds: float = 0.29
     player_move_seconds: float = 0.12
     vision_radius: int = 7
+    lights_vision_radius: int = 2
     kill_radius: int = 1
     kill_cooldown: float = 10.0
     initial_kill_cooldown: float = 9.0
@@ -43,6 +44,11 @@ class GameConfig:
     chat_history: int = 100
     chat_max_length: int = 200
     kills_enabled: bool = True
+    sabotage_enabled: bool = True
+    sabotage_seconds: float = 40.0
+    sabotage_repair_seconds: float = 3.0
+    sabotage_cooldown: float = 20.0
+    initial_sabotage_cooldown: float = 25.0
     npc_ai_enabled: bool = True
     end_on_player_death: bool = True
     max_seconds: float = 600.0
@@ -50,10 +56,10 @@ class GameConfig:
     fps: int = 15
 
     def __post_init__(self) -> None:
-        integers = {"seed", "player_count", "impostor_count", "tasks_per_player", "vision_radius",
+        integers = {"seed", "player_count", "impostor_count", "tasks_per_player", "vision_radius", "lights_vision_radius",
                     "kill_radius", "emergencies_per_player", "event_history", "fps",
                     "chat_history", "chat_max_length"}
-        booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death"}
+        booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death", "sabotage_enabled"}
         strings = {"play_mode", "player_color", "player_role", "task_win_mode"}
         for field in fields(self):
             value = getattr(self, field.name)
@@ -86,12 +92,12 @@ class GameConfig:
         if self.task_win_mode not in {"player", "team", "disabled"}:
             raise ValueError("task_win_mode must be player, team, or disabled")
         for name in ("task_seconds", "crew_move_seconds", "impostor_move_seconds", "player_move_seconds",
-                     "max_seconds", "event_history", "fps", "vision_radius",
-                     "voting_seconds", "chat_history", "chat_max_length"):
+                     "max_seconds", "event_history", "fps", "vision_radius", "lights_vision_radius",
+                     "voting_seconds", "chat_history", "chat_max_length", "sabotage_seconds", "sabotage_repair_seconds"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("kill_radius", "kill_cooldown", "initial_kill_cooldown", "post_meeting_kill_cooldown",
-                     "hunt_delay", "report_delay", "emergencies_per_player"):
+                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")
         if self.fps > 120 or self.vision_radius > 100:

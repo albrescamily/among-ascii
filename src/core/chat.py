@@ -23,10 +23,15 @@ class ChatSystem:
         self.max_length = max_length
         self.sequence = 0
 
-    def send(self, game: "Game", sender_id: str, message: str) -> bool:
+    def can_send(self, game: "Game", sender_id: str) -> bool:
         actor = game.entity(sender_id)
-        if not actor.alive or game.outcome or not isinstance(message, str):
+        return (actor.alive and not game.outcome and game.pending_meeting is not None
+                and game.meetings.remaining > 1e-9)
+
+    def send(self, game: "Game", sender_id: str, message: str) -> bool:
+        if not self.can_send(game, sender_id) or not isinstance(message, str):
             return False
+        actor = game.entity(sender_id)
         # Never allow chat text to execute terminal escapes or add rows.
         clean = " ".join("".join(char if char.isprintable() else " " for char in message).split())
         if not clean or len(message) > self.max_length:

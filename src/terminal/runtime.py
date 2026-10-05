@@ -5,13 +5,14 @@ from typing import Optional
 from ..core.config import GameConfig
 from ..core.engine import Game
 from ..core.world import MAP_H, MAP_W
+from ..core.sabotage import SABOTAGE_KEYS
 from .driver import Terminal
 from .menu import configure_game
 from .chat import ChatView, render_chat
 from .text import MIN_COLUMNS, MIN_ROWS, terminal_size, fit_screen
 from .palette import RED, RESET
 from .ui import (render_game, render_observer, render_help, render_end, render_meeting,
-                 render_vote_result, screen_layout, camera_origin, VOTE_KEYS)
+                 render_vote_result, screen_layout, camera_origin, VOTE_KEYS, sabotage_alert)
 
 MOVE_KEYS = {
     "w": (0, -1), "up": (0, -1),
@@ -19,6 +20,19 @@ MOVE_KEYS = {
     "a": (-1, 0), "left": (-1, 0),
     "d": (1, 0), "right": (1, 0),
 }
+
+
+def trigger_sabotage(game: Game, key: str) -> bool:
+    """The simulation spectator acts on behalf of a living impostor."""
+    actor = (next((a for a in game.players if a.alive and a.role == "impostor"), None)
+             if game.config.play_mode == "simulation" else game.player)
+    if actor is None:
+        game.message("Sabotage unavailable: no living impostor.")
+        return False
+    if game.apply_action(actor.id, {"kind": "sabotage", "target": SABOTAGE_KEYS[key]}):
+        return True
+    game.message("Sabotage requires a living impostor, no active emergency and a ready cooldown.")
+    return False
 
 
 def pan_camera(game: Game, dx: int, dy: int) -> None:
@@ -142,6 +156,8 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 game.report()
             elif key == "k":
                 game.kill(game.player_id)
+            elif key in SABOTAGE_KEYS:
+                trigger_sabotage(game, key)
             elif key == "v":
                 if not game.apply_action(game.player_id, "vent"):
                     game.message("Vent unavailable: approach a vent; exits must be clear.")
@@ -187,6 +203,10 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 screen = render_observer(game)
             else:
                 screen = render_game(game)
+            if game.sabotage.kind and (chat_view is not None or help_open):
+                lines = screen.splitlines()
+                lines[0] = sabotage_alert(game)
+                screen = fit_screen(lines)
             term.draw(screen)
             next_frame = now + 1 / game.config.fps
         sleep_for = max(0.0, min(0.01, next_frame - time.monotonic()))

@@ -9,6 +9,7 @@ from ..core.models import Player, Body, Pos
 from .palette import *
 from ..core.world import CONTAINERS, MAP_W, MAP_H, ROOM_LABELS, DOOR_CELLS, EMERGENCY_POS, manhattan, room_at
 from ..core.tasks import TASK_NAMES
+from ..core.sabotage import TITLES
 from .text import (ANSI_SGR, MIN_COLUMNS, MIN_ROWS, terminal_size, display_width,
                    fit_line, fit_screen, centered_screen)
 
@@ -68,6 +69,61 @@ def container_cell(pos: Pos, color: str, zoom: int = 1) -> str:
     return color + glyph * zoom + RESET
 
 
+def sabotage_alert(game: Game) -> str:
+    system = game.sabotage
+    instruction = "Repair ! panels" if game.config.play_mode == "simulation" else "E: repair ! panels"
+    if not system.critical:
+        return BOLD + RED + f" ! {TITLES[system.kind]} | crew vision reduced | " + instruction + RESET
+    return (BOLD + RED + f" ! {TITLES[system.kind]} | {math.ceil(max(0, system.remaining - 1e-9)):02d}s"
+            + " | " + instruction + RESET)
+
+
+def sabotage_panel(game: Game, width: int) -> list[str]:
+    system = game.sabotage
+    if not system.kind:
+        if ((game.config.play_mode == "simulation" or game.player.role == "impostor")
+                and game.config.sabotage_enabled):
+            status = f"{math.ceil(system.cooldown - 1e-9)}s cooldown" if system.cooldown > 1e-9 else "READY"
+            return [panel_heading("SABOTAGE", width), f" {status}", " F Reactor  G O2  J Admin",
+                    " L Lights (Electrical)", ""]
+        return []
+    lines = [RED + BOLD + (" CRITICAL EMERGENCY" if system.critical else " LIGHTS OUT") + RESET]
+    for index, panel in enumerate(system.panels):
+        status = "OK" if index in system.completed else f"{system.progress.get(index, 0.0):.0%}"
+        if (system.kind == "reactor" and index in system.workers.values()
+                and not system.progress.get(index, 0.0)):
+            status = "HOLDING"
+        lines += [f" ! {panel.name}: {status}", f"   @ {panel.pos[0]},{panel.pos[1]}"]
+    if system.kind == "reactor":
+        lines.append(" Two players, one per panel.")
+    elif not system.critical:
+        lines.append(" Crew vision reduced.")
+    if game.config.play_mode == "simulation":
+        lines += [" Awaiting crew repairs.", f" Hold time: {game.config.sabotage_repair_seconds:g}s.", ""]
+    else:
+        lines += [f" E: repair; stay {game.config.sabotage_repair_seconds:g}s.", " Move to cancel repair.", ""]
+    return lines
+
+
+def sabotage_marker(game: Game, pos: Pos) -> str | None:
+    for index, panel in enumerate(game.sabotage.panels):
+        if panel.pos == pos:
+            return BOLD + (GREEN if index in game.sabotage.completed else YELLOW) + "!" + RESET
+    return None
+
+
+def alarm_terrain(game: Game, pos: Pos, zoom: int, in_view: bool = True) -> str | None:
+    if not game.sabotage.kind:
+        return None
+    tile = game.grid[pos[1]][pos[0]]
+    color = RED if in_view else DIM + RED
+    if tile == "O":
+        return container_cell(pos, color, zoom)
+    glyph = {"#": "#", "D": DOOR_CELLS[pos].glyph if pos in DOOR_CELLS else "·",
+             "T": "◇", "V": "▣", "E": "◉", " ": " "}.get(tile, ROOM_LABELS.get(pos, "·"))
+    return color + glyph + RESET
+
+
 def render_map_layout(game: Game, panel: list[str], footer: list[str],
                       visible: Optional[set[Pos]] = None,
                       size: Optional[tuple[int, int]] = None) -> str:
@@ -75,10 +131,11 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
     if size[0] < MIN_COLUMNS or size[1] < MIN_ROWS:
         return fit_screen([], size)
     layout = screen_layout(game, size, observer=visible is None)
+    border = RED if game.sabotage.kind else BLUE
     x0, y0 = camera_origin(game, layout)
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
-    mode = ("SIMULATION" if game.config.play_mode == "simulation" else "DIRECTOR VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
+    mode = ("SIMULATION" if game.config.play_mode == "simulation" else "GOD VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
     color = RED if visible is None else CYAN
     clock = f"{int(game.elapsed // 60):02d}:{int(game.elapsed % 60):02d}"
     tasks = f"TASKS {len(game.completed_tasks)}/{len(game.assigned_tasks)}"
@@ -92,14 +149,14 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
                      f"{color}{mode}{RESET}  {clock} ", layout.width),
         align_status(position_status,
                      f"{tasks}  |  {layout.zoom}X {view} ", layout.width),
-        crew_task_bar(game, layout.width),
+        sabotage_alert(game) if game.sabotage.kind else crew_task_bar(game, layout.width),
     ]
     map_title = f" {view} / {'LIVE' if visible is None else 'FIELD OF VIEW'} "
     top = "┌" + map_title[:layout.map_space].ljust(layout.map_space, "─")
     if layout.panel_width:
         title = " CREW STATUS " if visible is None else " MISSION CONTROL "
         top += "┬" + title + "─" * max(0, layout.panel_width - len(title))
-    lines.append(BLUE + top + "┐" + RESET)
+    lines.append(border + top + "┐" + RESET)
     x_padding = (layout.map_space - layout.map_columns * layout.zoom) // 2
     y_padding = (layout.height - layout.map_rows) // 2
     for row in range(layout.height):
@@ -111,15 +168,15 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
                         else map_cell(game, pos, visible, zoom=layout.zoom))
                 cells.append(expand_map_cell(cell, layout.zoom))
         map_row = fit_line(" " * x_padding + "".join(cells), layout.map_space, pad=True)
-        line = BLUE + "│" + RESET + map_row
+        line = border + "│" + RESET + map_row
         if layout.panel_width:
             detail = panel[row] if row < len(panel) else ""
-            line += BLUE + "│" + RESET + fit_line(detail, layout.panel_width, pad=True)
-        lines.append(line + BLUE + "│" + RESET)
+            line += border + "│" + RESET + fit_line(detail, layout.panel_width, pad=True)
+        lines.append(line + border + "│" + RESET)
     bottom = "└" + "─" * layout.map_space
     if layout.panel_width:
         bottom += "┴" + "─" * layout.panel_width
-    lines.append(BLUE + bottom + "┘" + RESET)
+    lines.append(border + bottom + "┘" + RESET)
     lines.extend(footer)
     return fit_screen(lines, size)
 
@@ -139,11 +196,9 @@ def crew_task_bar(game: Game, width: int) -> str:
 
 
 def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
+    """The ship layout is public; current sight reveals actors and live colors."""
     x, y = pos
     in_view = pos in visible
-    known = pos in game.discovered
-    if not known:
-        return " "
 
     if in_view and game.player_alive and game.player.vent_id is None and pos == game.player_pos:
         symbol = game.player.symbol if game.config.play_mode == "simulation" else "@"
@@ -157,34 +212,45 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
             if body.pos == pos:
                 return BOLD + RED + "†" + RESET
 
+    emergency_cell = sabotage_marker(game, pos) or alarm_terrain(game, pos, zoom, in_view)
+    if emergency_cell is not None:
+        return emergency_cell
     tile = game.grid[y][x]
     if tile == " ":
         return " "
     if not in_view:
         if tile == "D":
-            return DARK + DOOR_CELLS[pos].glyph + RESET
+            return GRAY + DOOR_CELLS[pos].glyph + RESET
         if tile == "O":
-            return container_cell(pos, DARK, zoom)
-        return DARK + ("#" if tile == "#" else "·") + RESET
+            return container_cell(pos, GRAY, zoom)
+        if tile == "T":
+            glyph = "◆" if pos in game.assigned_tasks and pos not in game.completed_tasks else "◇"
+        elif tile == "E":
+            glyph = "◉"
+        elif tile == "V":
+            glyph = "▣"
+        else:
+            glyph = "#" if tile == "#" else ROOM_LABELS.get(pos, "·")
+        return GRAY + glyph + RESET
     if tile == "#":
         return BLUE + "#" + RESET
     if tile == "O":
         return container_cell(pos, BLUE, zoom)
     if tile == "D":
-        return CYAN + DOOR_CELLS[pos].glyph + RESET
+        return BLUE + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
         if pos in game.assigned_tasks and pos not in game.completed_tasks:
             return BOLD + YELLOW + "◆" + RESET
         if pos in game.completed_tasks:
             return GREEN + "◇" + RESET
-        return DIM + GRAY + "·" + RESET
+        return BLUE + "◇" + RESET
     if tile == "E":
         return BOLD + RED + "◉" + RESET
     if tile == "V":
         return MAGENTA + "▣" + RESET
     if pos in ROOM_LABELS:
-        return WHITE + ROOM_LABELS[pos] + RESET
-    return DIM + GRAY + "·" + RESET
+        return BLUE + ROOM_LABELS[pos] + RESET
+    return BLUE + "·" + RESET
 
 
 def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
@@ -193,7 +259,7 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     width = layout.panel_width or 32
     visible = game.visible_positions()
     task_ratio = len(game.completed_tasks) / max(1, len(game.assigned_tasks))
-    panel = [
+    panel = sabotage_panel(game, width) + [
         align_status(BOLD + WHITE + " TASK PROGRESS" + RESET, f"{task_ratio:.0%} ", width),
         " " + progress_bar(task_ratio, width - 2),
         f" {len(game.completed_tasks)} of {len(game.assigned_tasks)} tasks complete",
@@ -232,7 +298,17 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
                 break
             panel.append((" › " if index == 0 else "   ") + line)
 
-    if game.player.vent_id is not None:
+    if game.sabotage.kind and game.player_id in game.sabotage.workers:
+        hint = YELLOW + (" Hold still: BOTH scanners need a player." if game.sabotage.kind == "reactor"
+                         else " Repairing: stay still until complete.") + RESET
+    elif game.sabotage.nearby_panel(game, game.player_id) is not None:
+        hint = YELLOW + BOLD + " Press E to repair sabotage. Stay still." + RESET
+    elif game.sabotage.kind:
+        hint = RED + (" Emergency: reach the ! panels and press E." if game.sabotage.critical
+                      else " Lights out: fix the ! panel in Electrical.") + RESET
+    elif game.player.role == "impostor" and game.config.sabotage_enabled:
+        hint = RED + " Sabotage: F Reactor / G O2 / J Admin / L Lights" + RESET
+    elif game.player.vent_id is not None:
         hint = MAGENTA + " Hidden | kill cooldown paused" + RESET
     elif game.active_task:
         hint = YELLOW + " Stay nearby until syncing finishes." + RESET
@@ -243,10 +319,10 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     elif manhattan(game.player_pos, EMERGENCY_POS) <= 1 and game.emergency_available:
         hint = RED + " E: call an emergency meeting." + RESET
     else:
-        hint = DIM + " ◆ task   ◉ meeting   † body   · floor" + RESET
+        hint = GRAY + " Gray: layout" + BLUE + "  Blue: in view" + RESET
     footer = [
         vent_hint(game) or " WASD move E use R report V vent TAB view Z zoom P panel",
-        align_status(hint, "T chat  H help  Q quit ", layout.width),
+        align_status(hint, "T history  H help  Q quit ", layout.width),
     ]
     return render_map_layout(game, panel, footer, visible, size)
 
@@ -277,6 +353,9 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
         if body.pos == pos:
             return BOLD + RED + "†" + RESET
 
+    emergency_cell = sabotage_marker(game, pos) or alarm_terrain(game, pos, zoom)
+    if emergency_cell is not None:
+        return emergency_cell
     tile = game.grid[y][x]
     if tile == " ":
         return " "
@@ -312,17 +391,18 @@ def npc_activity(npc: Player) -> str:
 
 
 def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
-    """Omniscient live monitor: full map plus every entity's internal state."""
+    """God view: reveal the whole ship, players, bodies and crew state."""
     size = size or terminal_size()
     layout = screen_layout(game, size, observer=True)
     width = layout.panel_width or 32
-    available = max(1, layout.height - 5)
+    emergency_panel = sabotage_panel(game, width)
+    available = max(1, layout.height - 5 - len(emergency_panel))
     detail_rows = 3 if available >= len(game.players) * 3 else 2 if available >= len(game.players) * 2 else 1
     page_size = max(1, available // detail_rows)
     pages = (len(game.players) + page_size - 1) // page_size
     page = game.observer_page % pages
     first = page * page_size
-    panel = [panel_heading(f"CREW MANIFEST {page + 1}/{pages}", width)]
+    panel = emergency_panel + [panel_heading(f"CREW MANIFEST {page + 1}/{pages}", width)]
 
     for npc in game.players[first:first + page_size]:
         role = "IMPOSTOR" if npc.role == "impostor" else "CREW"
@@ -339,7 +419,8 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
         if detail_rows >= 3:
             show_goal = game.config.play_mode == "game"
             goal = f" → {npc.goal}" if npc.alive and npc.goal and show_goal else ""
-            activity = "INACTIVE" if game.config.play_mode == "simulation" else npc_activity(npc)
+            activity = ("INACTIVE" if game.config.play_mode == "simulation" else
+                        "REPAIRING" if npc.id in game.sabotage.workers else npc_activity(npc))
             panel.append(f"   {GRAY}{activity}{goal}{RESET}")
 
     panel += [
@@ -349,11 +430,11 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
         f" meeting {'PENDING' if game.pending_meeting else 'none'}",
     ]
     footer = [
-        " WASD/arrows camera  Z zoom  P panel" if game.config.play_mode == "simulation"
+        " WASD camera | F/G/J/L sabotage | Z zoom P panel" if game.config.play_mode == "simulation"
         else vent_hint(game) or " WASD move E use R report V vent TAB back Z zoom P panel",
         align_status(" " + (f"{game.chat.messages[-1].color}: {game.chat.messages[-1].text}"
                             if game.chat.messages else "[ / ] crew pages   ┆/┄ open doors"),
-                     "T chat  H help  Q quit ", layout.width),
+                     "T history  H help  Q quit ", layout.width),
     ]
     return render_map_layout(game, panel, footer, size=size)
 
@@ -361,17 +442,21 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
 def render_help(game: Game) -> str:
     content = [
         "HOW TO PLAY // THE SKELD",
-        "The world keeps running on this screen.",
+        "Map known: gray layout, blue in sight.",
         "",
         "WASD / arrows move",
         "E             use / interact",
         "R             report a body; K to kill",
         "V             vent in/out; 1/2 travel inside",
-        "Tab           map monitor",
+        "F / G / J     sabotage Reactor / O2 / Admin",
+        "L             sabotage Lights (crew vision)",
+        "E at !        repair; stay still until done",
+        "Reactor needs TWO players holding panels.",
+        "Tab           god view / player view",
         "Z             toggle map zoom (1X / 2X)",
         "P             show / hide side panel",
         "[ / ]         previous / next crew page",
-        "T             broadcast chat (Esc: back)",
+        "T             chat (write during voting)",
         "H             close help",
         "Q             quit game",
         "",
@@ -385,12 +470,18 @@ def render_help(game: Game) -> str:
                    "Z             toggle map zoom (1X / 2X)",
                    "P             show / hide side panel",
                    "[ / ]         previous / next crew page",
+                   "F / G / J     sabotage Reactor / O2 / Admin",
+                   "L             sabotage Lights (crew vision)",
+                   f"Sabotage: {game.config.sabotage_seconds:g}s, cooldown {game.config.sabotage_cooldown:g}s.",
+                   "Crew has no automatic repair behavior.",
                    "T             broadcast chat (read only)",
                    "H             close help", "Q             stop simulation", "",
                    "No movement, tasks, chat or votes by agents.",
                    "Game NPCs run only in Game mode.",
                    f"Full map + panel: at least {MAP_W + 36}x{MAP_H + 8}.",
                    "R on the final screen returns to setup."]
+    if game.sabotage.kind:
+        content[0] = sabotage_alert(game)
     box = [CYAN + "╔" + "═" * 44 + "╗" + RESET]
     box += ["║ " + fit_line(line, 42, pad=True) + " ║" for line in content]
     box.append(CYAN + "╚" + "═" * 44 + "╝" + RESET)

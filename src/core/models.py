@@ -76,12 +76,14 @@ class Action:
         else:
             raise ValueError("Action must be a name or an object with kind, optional target or message")
         if not isinstance(action.kind, str) or action.kind not in (
-                *MOVE_ACTIONS, "wait", "interact", "report", "emergency", "kill", "vote", "chat", "vent"):
+                *MOVE_ACTIONS, "wait", "interact", "report", "emergency", "kill", "vote", "chat", "vent", "sabotage"):
             raise ValueError(f"Unknown action: {action.kind!r}")
         if action.target is not None and not isinstance(action.target, str):
             raise ValueError("Action target must be a player/vent ID or null")
-        if action.target is not None and action.kind not in ("vote", "kill", "vent"):
-            raise ValueError("Only kill, vote and vent actions accept a target")
+        if action.target is not None and action.kind not in ("vote", "kill", "vent", "sabotage"):
+            raise ValueError("Only kill, vote, vent and sabotage actions accept a target")
+        if action.kind == "sabotage" and action.target not in ("reactor", "o2", "admin", "lights"):
+            raise ValueError("Sabotage target must be reactor, o2, admin or lights")
         if action.kind == "chat":
             if not isinstance(action.message, str) or not action.message.strip():
                 raise ValueError("Chat requires a non-empty message string")

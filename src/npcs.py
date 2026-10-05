@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from .core.models import Player, Pos
 from .core.tasks import TASK_POSITIONS
 from .core.world import VENT_IDS
+from .core.sabotage import PANELS
 if TYPE_CHECKING:
     from .core.engine import Game
 
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 class NPCSystem:
     def __init__(self) -> None:
         self.meeting_vote_times: dict[str, float] = {}
-        self.greetings: set[tuple[str, int, bool]] = set()
+        self.greetings: set[tuple[str, int]] = set()
 
     def start_meeting(self, game: "Game") -> None:
         """Spread built-in decisions across the meeting, using the episode RNG."""
@@ -27,12 +28,12 @@ class NPCSystem:
             fraction = 0.15 + 0.60 * (index + game.rng.uniform(0.1, 0.9)) / len(voters)
             self.meeting_vote_times[actor_id] = game.meetings.duration * fraction
 
-    def greet(self, game: "Game", *, meeting: bool = False) -> None:
-        """Greet once at the start and once per meeting."""
-        if not game.config.npc_ai_enabled:
+    def greet(self, game: "Game") -> None:
+        """Greet once per voting session; gameplay chat is read-only."""
+        if not game.config.npc_ai_enabled or not game.pending_meeting:
             return
         for actor in game.npcs:
-            key = (actor.id, game.meeting_number if meeting else -1, meeting)
+            key = (actor.id, game.meeting_number)
             if actor.alive and key not in self.greetings:
                 if game.chat.send(game, actor.id, "Hello world"):
                     self.greetings.add(key)
@@ -56,6 +57,10 @@ class NPCSystem:
         return game.rng.choices(options, weights=weights, k=1)[0]
 
     def choose_goal(self, game: "Game", actor: Player) -> Pos:
+        if actor.role == "crew" and game.sabotage.kind:
+            goal = game.sabotage.npc_goal(game, actor.id)
+            if goal is not None:
+                return goal
         if actor.role == "impostor" and game.elapsed >= game.config.hunt_delay:
             # Targets must be in sight: the built-in hunter gets no unseen positions.
             victims = [other for other in game.players if other.alive and other.role == "crew"
@@ -107,12 +112,25 @@ class NPCSystem:
     def tick(self, game: "Game") -> None:
         if not game.config.npc_ai_enabled:
             return
-        self.greet(game)
+        if not game.sabotage.kind and game.sabotage.cooldown <= 1e-9 and game.config.sabotage_enabled:
+            impostor = next((a for a in game.npcs if a.alive and a.role == "impostor"), None)
+            if impostor is not None:
+                game.sabotage.start(game, impostor.id, game.rng.choice(tuple(PANELS)))
         for actor in game.npcs:
             if not actor.alive:
                 continue
             if actor.role == "crew" and game.report_body(actor.id, automatic=True):
                 return
+            if actor.role == "crew" and game.sabotage.kind:
+                goal = game.sabotage.npc_goal(game, actor.id)
+                if goal is not None:
+                    game.tasks.cancel(game, actor.id)
+                    if game.distance(actor.pos, goal) <= 1:
+                        game.sabotage.interact(game, actor.id)
+                    elif actor.move_clock <= 0:
+                        self.move(game, actor)
+                        actor.move_clock = game.move_interval(actor)
+                    continue
             if actor.role == "crew" and game.tasks.start(game, actor.id):
                 continue
             if actor.move_clock <= 0:

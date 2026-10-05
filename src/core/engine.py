@@ -13,6 +13,7 @@ from .models import Action, Body, COLORS, MOVE_ACTIONS, Player, Pos
 from ..npcs import NPCSystem
 from .tasks import TaskSystem
 from .vents import VentSystem
+from .sabotage import SabotageSystem
 from .world import EMERGENCY_POS, MAP_H, MAP_W, SPAWNS, ShipMap, manhattan, room_at
 
 
@@ -51,6 +52,7 @@ class Game:
         self.chat = ChatSystem(self.config.chat_history, self.config.chat_max_length)
         self.tasks = TaskSystem(self)
         self.vents = VentSystem()
+        self.sabotage = SabotageSystem(self)
         self.npc_system = NPCSystem() if self.config.play_mode == "game" else None
         self.meetings = MeetingSystem()
         self.bodies: list[Body] = []
@@ -118,7 +120,7 @@ class Game:
 
     @property
     def emergency_available(self) -> bool:
-        return self.player.emergencies_left > 0 and self.config.meetings_enabled
+        return self.player.emergencies_left > 0 and self.config.meetings_enabled and not self.sabotage.critical
 
     @property
     def pending_meeting(self) -> Optional[tuple[str, Optional[Body]]]:
@@ -186,6 +188,7 @@ class Game:
         if not self.is_walkable(destination) or self.occupied(destination, player_id):
             return False
         actor.pos = destination
+        self.sabotage.cancel_worker(player_id)
         state = self.tasks.states[player_id]
         if state.active and manhattan(destination, state.active) > 1:
             self.tasks.cancel(self, player_id, "Task interrupted.")
@@ -199,7 +202,8 @@ class Game:
         if (self.outcome or self.pending_meeting or not self.entity(player_id).alive
                 or self.entity(player_id).vent_id is not None):
             return False
-        return self.tasks.start(self, player_id) or self.call_emergency(player_id)
+        return (self.sabotage.interact(self, player_id)
+                or self.tasks.start(self, player_id) or self.call_emergency(player_id))
 
     def interact(self) -> bool:
         return self.interact_entity(self.player_id)
@@ -242,6 +246,8 @@ class Game:
             return self.meetings.submit(self, player_id, action.target)
         if self.pending_meeting:
             return False
+        if action.kind == "sabotage":
+            return self.sabotage.start(self, player_id, action.target)
         if action.kind == "vent":
             return self.vents.use(self, player_id, action.target)
         if action.kind in MOVE_ACTIONS:
@@ -277,6 +283,9 @@ class Game:
                 actor.rethink_clock -= step
                 if actor.vent_id is None:
                     actor.kill_clock = max(0.0, actor.kill_clock - step)
+            self.sabotage.tick(self, step)
+            if self.outcome:
+                break
             self.tasks.tick(self, step)
             if self.outcome:
                 break
@@ -316,6 +325,7 @@ class Game:
                                 witnesses + [attacker_id]))
         victim.alive = False
         victim.path = []
+        self.sabotage.cancel_worker(victim.id)
         self.tasks.cancel(self, victim.id)
         attacker.kill_clock = self.config.kill_cooldown
         for witness_id in witnesses:
@@ -363,18 +373,25 @@ class Game:
             return False
         return self.world.has_line_of_sight(start, end, self.config.vision_radius if radius is None else radius)
 
+    def vision_radius(self, player_id: str) -> int:
+        """Lights sabotage dims crew sight only; impostors keep full vision."""
+        if self.sabotage.kind == "lights" and self.entity(player_id).role == "crew":
+            return min(self.config.vision_radius, self.config.lights_vision_radius)
+        return self.config.vision_radius
+
     def can_see(self, player_id: str, pos: Pos) -> bool:
         actor = self.entity(player_id)
-        return actor.alive and actor.vent_id is None and self.has_line_of_sight(actor.pos, pos)
+        return (actor.alive and actor.vent_id is None
+                and self.has_line_of_sight(actor.pos, pos, self.vision_radius(player_id)))
 
     def visible_positions(self, player_id: Optional[str] = None) -> set[Pos]:
         actor = self.entity(player_id or self.player_id)
         visible: set[Pos] = set()
         if actor.alive and actor.vent_id is None:
-            radius = self.config.vision_radius
+            radius = self.vision_radius(actor.id)
             for y in range(max(0, actor.pos[1] - radius), min(MAP_H, actor.pos[1] + radius + 1)):
                 for x in range(max(0, actor.pos[0] - radius), min(MAP_W, actor.pos[0] + radius + 1)):
-                    if self.has_line_of_sight(actor.pos, (x, y)):
+                    if self.has_line_of_sight(actor.pos, (x, y), radius):
                         visible.add((x, y))
         self.discovered_by[actor.id].update(visible)
         return visible

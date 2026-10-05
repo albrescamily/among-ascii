@@ -27,6 +27,7 @@ class VentSystem:
                 return False
             actor.pos = VENT_POSITIONS[source]
             actor.vent_id = source
+            game.sabotage.cancel_worker(player_id)
             game.tasks.cancel(game, player_id)
             self.emit_surface_event(game, player_id, "vent_entered", source)
         elif target is not None:

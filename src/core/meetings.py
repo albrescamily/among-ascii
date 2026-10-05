@@ -26,6 +26,10 @@ class MeetingSystem:
         reporter = game.entity(reporter_id)
         if not reporter.alive or reporter.vent_id is not None:
             return False
+        if game.sabotage.kind:
+            if body is None and game.sabotage.critical:
+                return False
+            game.sabotage.clear(game, reported=True)
         self.pending = (reporter_id, body)
         self.elapsed = 0.0
         self.duration = game.config.voting_seconds
@@ -41,7 +45,7 @@ class MeetingSystem:
                         "room": body.room if body else "Cafeteria",
                         "voting_seconds": self.duration})
         if game.npc_system is not None:
-            game.npc_system.greet(game, meeting=True)
+            game.npc_system.greet(game)
         return True
 
     def submit(self, game: "Game", voter_id: str, target: Optional[str]) -> bool:

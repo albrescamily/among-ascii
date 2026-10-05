@@ -51,7 +51,7 @@ class TaskSystem:
         state = self.states[player_id]
         available = [pos for pos in state.assigned if pos not in state.completed
                      and game.distance(actor.pos, pos) <= 1]
-        if not actor.alive or not available:
+        if not actor.alive or not available or player_id in game.sabotage.workers:
             return False
         target = min(available, key=lambda pos: game.distance(actor.pos, pos))
         if state.active == target:
