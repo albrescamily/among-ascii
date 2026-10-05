@@ -198,7 +198,7 @@ class ShipMap:
 
     def is_walkable(self, pos: Pos) -> bool:
         x, y = pos
-        return 0 <= x < MAP_W and 0 <= y < MAP_H and self.grid[y][x] in ".DTEV"
+        return 0 <= x < MAP_W and 0 <= y < MAP_H and self.grid[y][x] in ".DTEV"  # "C" (closed door) is not walkable
 
     def find_path(self, start: Pos, goal: Pos, *, use_vents: bool = False) -> list[Pos]:
         if not self.is_walkable(start) or not self.is_walkable(goal):
@@ -240,7 +240,7 @@ class ShipMap:
         sy = 1 if y0 < y1 else -1
         error = dx + dy
         while True:
-            if (x0, y0) != start and (x0, y0) != end and self.grid[y0][x0] in "# O":
+            if (x0, y0) != start and (x0, y0) != end and self.grid[y0][x0] in "# OC":
                 return False
             if (x0, y0) == (x1, y1):
                 return True

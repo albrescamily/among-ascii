@@ -146,12 +146,14 @@ class MapGeometryTests(unittest.TestCase):
         self.assertEqual({door.axis for door in DOORS}, {"horizontal", "vertical"})
         for pos, door in DOOR_CELLS.items():
             with self.subTest(room=door.room, pos=pos):
-                expected = "┄" if door.axis == "horizontal" else "┆"
-                cells = (observer_map_cell(game, pos), map_cell(game, pos, {pos}),
-                         map_cell(game, pos, set()))
-                for cell in cells:
-                    self.assertEqual(ANSI_SGR.sub("", cell), expected)
-                    self.assertEqual(display_width(cell), 1)
+                for code, expected in (("D", "-"), ("C", "+")):  # open, closed
+                    game.grid[pos[1]][pos[0]] = code
+                    cells = (observer_map_cell(game, pos), map_cell(game, pos, {pos}),
+                             map_cell(game, pos, set()))
+                    for cell in cells:
+                        self.assertEqual(ANSI_SGR.sub("", cell), expected)
+                        self.assertEqual(display_width(cell), 1)
+                game.grid[pos[1]][pos[0]] = "D"
 
 
 if __name__ == "__main__":

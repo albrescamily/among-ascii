@@ -14,6 +14,7 @@ from ..npcs import NPCSystem
 from .tasks import TaskSystem
 from .vents import VentSystem
 from .sabotage import SabotageSystem
+from .doors import DoorSystem
 from .world import EMERGENCY_POS, MAP_H, MAP_W, SPAWNS, ShipMap, manhattan, room_at
 
 
@@ -58,6 +59,7 @@ class Game:
         self.tasks = TaskSystem(self)
         self.vents = VentSystem()
         self.sabotage = SabotageSystem(self)
+        self.doors = DoorSystem()
         self.npc_system = NPCSystem() if self.config.play_mode == "game" and not self.test_mode else None
         self.meetings = MeetingSystem()
         self.bodies: list[Body] = []
@@ -253,6 +255,8 @@ class Game:
             return False
         if action.kind == "sabotage":
             return self.sabotage.start(self, player_id, action.target)
+        if action.kind == "doors":
+            return self.doors.close(self, player_id, action.target)
         if action.kind == "vent":
             return self.vents.use(self, player_id, action.target)
         if action.kind in MOVE_ACTIONS:
@@ -291,6 +295,7 @@ class Game:
             self.sabotage.tick(self, step)
             if self.outcome:
                 break
+            self.doors.tick(self, step)
             self.tasks.tick(self, step)
             if self.outcome:
                 break
@@ -382,6 +387,8 @@ class Game:
         """Test mode: revive everyone, clear bodies and emergencies, refill cooldowns."""
         self.sabotage.clear(self)
         self.sabotage.cooldown = 0.0
+        self.doors.open_all(self)
+        self.doors.cooldowns.clear()
         self.bodies.clear()
         for actor in self.players:
             actor.alive, actor.vent_id, actor.kill_clock = True, None, 0.0

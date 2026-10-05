@@ -10,6 +10,7 @@ from .palette import *
 from ..core.world import CONTAINERS, MAP_W, MAP_H, ROOM_LABELS, DOOR_CELLS, EMERGENCY_POS, manhattan, room_at
 from ..core.tasks import TASK_NAMES
 from ..core.sabotage import TITLES
+from ..core.doors import DOOR_KEYS, DOOR_ROOMS, room_doors
 from .text import (ANSI_SGR, MIN_COLUMNS, MIN_ROWS, terminal_size, display_width,
                    fit_line, fit_screen, centered_screen)
 
@@ -62,7 +63,7 @@ def expand_map_cell(cell: str, zoom: int) -> str:
     if zoom == 1 or display_width(cell) == zoom:
         return cell
     glyph = ANSI_SGR.sub("", cell)
-    return cell * zoom if glyph in ("#", "┄") else cell + " " * (zoom - 1)
+    return cell * zoom if glyph in ("#", "-", "+") else cell + " " * (zoom - 1)
 
 
 def container_cell(pos: Pos, color: str, zoom: int = 1) -> str:
@@ -72,6 +73,19 @@ def container_cell(pos: Pos, color: str, zoom: int = 1) -> str:
                                     if bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3])
     glyph = "#" if x in (left, right) or y in (top, bottom) else " "
     return color + glyph * zoom + RESET
+
+
+OPEN_DOOR, CLOSED_DOOR = "-", "+"
+
+
+def door_cell(game: Game, pos: Pos, color: str) -> Optional[str]:
+    """Doorway glyph: `-` open in `color`, `+` closed in bold red; None if not a door."""
+    tile = game.grid[pos[1]][pos[0]]
+    if tile == "C":
+        return BOLD + RED + CLOSED_DOOR + RESET
+    if tile == "D":
+        return color + OPEN_DOOR + RESET
+    return None
 
 
 def sabotage_alert(game: Game) -> str:
@@ -139,7 +153,7 @@ def alarm_terrain(game: Game, pos: Pos, zoom: int, in_view: bool = True) -> str 
     color = RED if in_view else DIM + RED
     if tile == "O":
         return container_cell(pos, color, zoom)
-    glyph = {"#": "#", "D": DOOR_CELLS[pos].glyph if pos in DOOR_CELLS else "·",
+    glyph = {"#": "#", "D": OPEN_DOOR, "C": CLOSED_DOOR,
              "T": "◇", "V": "▣", "E": "◉", " ": " "}.get(tile, ROOM_LABELS.get(pos, "·" if in_view else " "))
     return color + glyph + RESET
 
@@ -421,8 +435,8 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
     if tile == " ":
         return " "
     if not in_view:
-        if tile == "D":
-            return GRAY + DOOR_CELLS[pos].glyph + RESET
+        if tile in ("D", "C"):
+            return door_cell(game, pos, GRAY)
         if tile == "O":
             return container_cell(pos, GRAY, zoom)
         if tile == "T":
@@ -439,8 +453,8 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
         return BLUE + "#" + RESET
     if tile == "O":
         return container_cell(pos, BLUE, zoom)
-    if tile == "D":
-        return BLUE + DOOR_CELLS[pos].glyph + RESET
+    if tile in ("D", "C"):
+        return door_cell(game, pos, BLUE)
     if tile == "T":
         if pos in own_tasks(game) and pos not in game.completed_tasks:
             return BOLD + YELLOW + "◆" + RESET
@@ -529,8 +543,8 @@ def ship_cell(game: Game, pos: Pos, zoom: int, structure: str, floor: str = "·"
         return structure + "#" + RESET
     if tile == "O":
         return container_cell(pos, structure, zoom)
-    if tile == "D":
-        return structure + DOOR_CELLS[pos].glyph + RESET
+    if tile in ("D", "C"):
+        return door_cell(game, pos, structure)
     if tile == "T":
         if pos in game.completed_tasks and own_tasks(game):
             return GREEN + "◇" + RESET
@@ -629,13 +643,35 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     last = game.chat.messages[-1] if game.chat.messages else None
     footer = [
         (" " + keys_line(controls)) if game.config.play_mode == "simulation" else vent_hint(game) or " " + keys_line(controls),
-        align_status(" " + (f"{last.color}: {last.text}" if last else GRAY + "┆/┄ open doors  " + RESET + EMERGENCY_LEGEND),
+        align_status(" " + (f"{last.color}: {last.text}" if last else GRAY + "-- open door  ++ closed  " + RESET + EMERGENCY_LEGEND),
                      keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
     return render_map_layout(game, panel, footer, size=size, view_mode="god")
 
 
-MINIMAP_LEGEND = ["@ you", "◆ your task  ◇ task", "! sabotage  ◉ emergency button", "▣ vent  ┆/┄ door"]
+MINIMAP_LEGEND = ["@ you", "◆ your task  ◇ task", "! sabotage  ◉ emergency button",
+                  "▣ vent", "-- open door  ++ closed door"]
+
+
+def doors_panel(game: Game, width: int) -> list[str]:
+    """Impostor door controls on the mini map: number keys lock a room's doors."""
+    doors = game.doors
+    limit = game.config.max_closed_rooms
+    lines = [panel_heading(f"DOORS {doors.closed_count}/{limit} ROOMS CLOSED", width, RED)]
+    if game.sabotage.kind:
+        lines.append(GRAY + " Locked during sabotage." + RESET)
+    for key, room_id in DOOR_KEYS.items():
+        if room_id in doors.closed:
+            state = RED + BOLD + f"++ {math.ceil(doors.closed[room_id] - 1e-9)}s" + RESET
+        elif doors.cooldowns.get(room_id, 0.0) > 1e-9:
+            state = GRAY + f"wait {math.ceil(doors.cooldowns[room_id] - 1e-9)}s" + RESET
+        elif doors.refusal(game, game.player_id, room_id):
+            state = GRAY + "--" + RESET
+        else:
+            state = GREEN + "-- ready" + RESET
+        name = f" {BOLD}{WHITE}{key}{RESET} {DOOR_ROOMS[room_id]} {GRAY}({len(room_doors(room_id))}){RESET}"
+        lines.append(align_status(name, state + " ", width))
+    return lines + [GRAY + f" Press 1-{len(DOOR_KEYS)} to close a room." + RESET, ""]
 
 
 def render_minimap(game: Game, size: Optional[tuple[int, int]] = None) -> str:
@@ -643,7 +679,8 @@ def render_minimap(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     size = size or terminal_size()
     layout = screen_layout(game, size, observer=True)
     width = layout.panel_width or 32
-    role = (impostor_panel(game, width, game.visible_positions()) if game.player.role == "impostor"
+    impostor = game.player.role == "impostor" and game.player_alive
+    role = (doors_panel(game, width) + impostor_panel(game, width, game.visible_positions()) if impostor
             else crew_panel(game, layout, width))
     legend = [panel_heading("LEGEND", width)] + [GRAY + " " + line + RESET for line in MINIMAP_LEGEND]
     panel = stack_sections([test_panel(game, width), sabotage_panel(game, width), role, legend], layout.height, 0)
@@ -671,6 +708,7 @@ def render_help(game: Game) -> str:
         "E at !        repair; stay still until done",
         "Reactor needs TWO players holding panels.",
         "Tab           mini map (no players)",
+        "1-7 in map    impostor: close a room's doors",
         *(["Caps Lock     god view while it is on"] if game.god_view_allowed else []),
         "Z             toggle map zoom (1X / 2X)",
         "P             show / hide side panel",

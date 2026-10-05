@@ -6,6 +6,7 @@ from ..core.config import GameConfig
 from ..core.engine import Game
 from ..core.world import MAP_H, MAP_W
 from ..core.sabotage import SABOTAGE_KEYS
+from ..core.doors import DOOR_KEYS
 from .driver import Terminal
 from .menu import configure_game
 from .chat import ChatView, render_chat
@@ -171,6 +172,13 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
             elif key == "v":
                 if not game.apply_action(game.player_id, "vent"):
                     game.message("Vent unavailable: approach a vent; exits must be clear.")
+            elif (minimap_open and key in DOOR_KEYS and game.player.vent_id is None
+                  and game.player.role == "impostor"):
+                reason = game.doors.refusal(game, game.player_id, DOOR_KEYS[key])
+                if reason:
+                    game.message(reason)
+                else:
+                    game.apply_action(game.player_id, {"kind": "doors", "target": DOOR_KEYS[key]})
             elif key in ("1", "2") and game.player.vent_id is not None:
                 connections = game.vents.observe(game, game.player_id)["connections"]
                 index = int(key) - 1

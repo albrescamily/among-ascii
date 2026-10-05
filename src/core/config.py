@@ -51,6 +51,9 @@ class GameConfig:
     sabotage_repair_seconds: float = 3.0
     sabotage_cooldown: float = 20.0
     initial_sabotage_cooldown: float = 25.0
+    max_closed_rooms: int = 3
+    door_close_seconds: float = 10.0
+    door_cooldown: float = 10.0  # per room, after it reopens
     npc_ai_enabled: bool = True
     end_on_player_death: bool = True
     max_seconds: float = 600.0
@@ -59,7 +62,7 @@ class GameConfig:
 
     def __post_init__(self) -> None:
         integers = {"seed", "player_count", "impostor_count", "tasks_per_player", "vision_radius", "lights_vision_radius",
-                    "kill_radius", "emergencies_per_player", "event_history", "fps",
+                    "kill_radius", "emergencies_per_player", "event_history", "fps", "max_closed_rooms",
                     "chat_history", "chat_max_length"}
         booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death", "sabotage_enabled",
                     "test_mode", "allow_god_view"}
@@ -96,11 +99,12 @@ class GameConfig:
             raise ValueError("task_win_mode must be player, team, or disabled")
         for name in ("task_seconds", "crew_move_seconds", "impostor_move_seconds", "player_move_seconds",
                      "max_seconds", "event_history", "fps", "vision_radius", "lights_vision_radius",
-                     "voting_seconds", "chat_history", "chat_max_length", "sabotage_seconds", "sabotage_repair_seconds"):
+                     "voting_seconds", "chat_history", "chat_max_length", "sabotage_seconds", "sabotage_repair_seconds",
+                     "door_close_seconds", "max_closed_rooms"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("kill_radius", "kill_cooldown", "initial_kill_cooldown", "post_meeting_kill_cooldown",
-                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown"):
+                     "hunt_delay", "report_delay", "emergencies_per_player", "sabotage_cooldown", "initial_sabotage_cooldown", "door_cooldown"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")
         if self.fps > 120 or self.vision_radius > 100:

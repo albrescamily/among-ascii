@@ -30,6 +30,7 @@ class MeetingSystem:
             if body is None and game.sabotage.critical:
                 return False
             game.sabotage.clear(game, reported=True)
+        game.doors.open_all(game)
         self.pending = (reporter_id, body)
         self.elapsed = 0.0
         self.duration = game.config.voting_seconds

@@ -52,6 +52,7 @@ class SabotageSystem:
                 or not actor.alive or actor.role != "impostor"):
             return False
         self.kind = kind
+        game.doors.open_all(game)  # No doorway stays locked during a sabotage.
         self.remaining = game.config.sabotage_seconds if self.critical else 0.0
         self.workers.clear()
         self.progress.clear()
