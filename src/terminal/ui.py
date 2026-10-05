@@ -105,6 +105,12 @@ def sabotage_panel(game: Game, width: int) -> list[str]:
     return lines
 
 
+def test_panel(game: Game, width: int) -> list[str]:
+    if not game.test_mode:
+        return []
+    return [panel_heading("TEST MAP", width), " X: swap crew / impostor", " N: revive + reset", ""]
+
+
 def sabotage_marker(game: Game, pos: Pos) -> str | None:
     for index, panel in enumerate(game.sabotage.panels):
         if panel.pos == pos:
@@ -136,6 +142,8 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
     mode = ("SIMULATION" if game.config.play_mode == "simulation" else "GOD VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
+    if game.test_mode:
+        mode = "TEST / " + mode
     color = RED if visible is None else CYAN
     clock = f"{int(game.elapsed // 60):02d}:{int(game.elapsed % 60):02d}"
     tasks = f"TASKS {len(game.completed_tasks)}/{len(game.assigned_tasks)}"
@@ -144,11 +152,13 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
         position_status = f" {sum(actor.alive for actor in game.players)}/{len(game.players)} PLAYERS ALIVE"
         progress = game.tasks.crew_progress(game)
         tasks = f"TASKS {progress['completed']}/{progress['total']}"
+    elif game.player.role == "impostor":
+        tasks = ""  # Impostors have no real tasks of their own.
     lines = [
         align_status(BOLD + color + " AMONG-ASCII / THE SKELD" + RESET,
                      f"{color}{mode}{RESET}  {clock} ", layout.width),
         align_status(position_status,
-                     f"{tasks}  |  {layout.zoom}X {view} ", layout.width),
+                     f"{tasks + '  |  ' if tasks else ''}{layout.zoom}X {view} ", layout.width),
         sabotage_alert(game) if game.sabotage.kind else crew_task_bar(game, layout.width),
     ]
     map_title = f" {view} / {'LIVE' if visible is None else 'FIELD OF VIEW'} "
@@ -195,11 +205,53 @@ def crew_task_bar(game: Game, width: int) -> str:
     return BOLD + CYAN + label + RESET + progress_bar(progress["fraction"], bar_width) + WHITE + percent + RESET
 
 
+def own_tasks(game: Game) -> list[Pos]:
+    """Tasks the local player should see; impostors have none to do."""
+    return game.assigned_tasks if game.player.role == "crew" else []
+
+
+def impostor_panel(game: Game, width: int) -> list[str]:
+    clock = game.player.kill_clock
+    kill = GREEN + "READY" + RESET if clock <= 1e-9 else f"{clock:.1f}s"
+    vent = "HIDDEN" if game.player.vent_id is not None else "V near a vent"
+    return [panel_heading("IMPOSTOR", width), f" Kill: {kill}  (K)", f" Vent: {vent}",
+            " Blend in: fake tasks.", ""]
+
+
+def crew_panel(game: Game, layout: ScreenLayout, width: int) -> list[str]:
+    task_ratio = len(game.completed_tasks) / max(1, len(game.assigned_tasks))
+    panel = [
+        align_status(BOLD + WHITE + " TASK PROGRESS" + RESET, f"{task_ratio:.0%} ", width),
+        " " + progress_bar(task_ratio, width - 2),
+        f" {len(game.completed_tasks)} of {len(game.assigned_tasks)} tasks complete",
+        "",
+    ]
+    if game.active_task:
+        name = TASK_NAMES[game.active_task]
+        panel += [
+            BOLD + YELLOW + f" SYNCING... {game.task_progress:.0%}" + RESET,
+            " " + progress_bar(game.task_progress, width - 2),
+            *[" " + line for line in textwrap.wrap(name, width - 2)],
+            " " + CYAN + room_at(game.active_task) + RESET,
+        ]
+    else:
+        remaining = [p for p in game.assigned_tasks if p not in game.completed_tasks]
+        panel.append(panel_heading("ASSIGNMENTS", width))
+        for index, pos in enumerate(remaining[:5], start=1):
+            marker = "!" if manhattan(game.player_pos, pos) <= 1 else str(index)
+            panel.append(f" {YELLOW}{marker}{RESET} {TASK_NAMES[pos]}")
+            if layout.height >= 23:
+                panel.append("   " + CYAN + room_at(pos) + RESET)
+    return panel
+
+
 def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
     """The ship layout is public; current sight reveals actors and live colors."""
     x, y = pos
     in_view = pos in visible
 
+    if game.player_alive and game.player.vent_id is not None and pos == game.player_pos:
+        return BOLD + game.player.color + "▣" + RESET
     if in_view and game.player_alive and game.player.vent_id is None and pos == game.player_pos:
         symbol = game.player.symbol if game.config.play_mode == "simulation" else "@"
         return BOLD + game.player.color + symbol + RESET
@@ -224,7 +276,7 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
         if tile == "O":
             return container_cell(pos, GRAY, zoom)
         if tile == "T":
-            glyph = "◆" if pos in game.assigned_tasks and pos not in game.completed_tasks else "◇"
+            glyph = "◆" if pos in own_tasks(game) and pos not in game.completed_tasks else "◇"
         elif tile == "E":
             glyph = "◉"
         elif tile == "V":
@@ -239,9 +291,9 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
     if tile == "D":
         return BLUE + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
-        if pos in game.assigned_tasks and pos not in game.completed_tasks:
+        if pos in own_tasks(game) and pos not in game.completed_tasks:
             return BOLD + YELLOW + "◆" + RESET
-        if pos in game.completed_tasks:
+        if pos in game.completed_tasks and own_tasks(game):
             return GREEN + "◇" + RESET
         return BLUE + "◇" + RESET
     if tile == "E":
@@ -258,30 +310,8 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     layout = screen_layout(game, size)
     width = layout.panel_width or 32
     visible = game.visible_positions()
-    task_ratio = len(game.completed_tasks) / max(1, len(game.assigned_tasks))
-    panel = sabotage_panel(game, width) + [
-        align_status(BOLD + WHITE + " TASK PROGRESS" + RESET, f"{task_ratio:.0%} ", width),
-        " " + progress_bar(task_ratio, width - 2),
-        f" {len(game.completed_tasks)} of {len(game.assigned_tasks)} tasks complete",
-        "",
-    ]
-
-    if game.active_task:
-        name = TASK_NAMES[game.active_task]
-        panel += [
-            BOLD + YELLOW + f" SYNCING... {game.task_progress:.0%}" + RESET,
-            " " + progress_bar(game.task_progress, width - 2),
-            *[" " + line for line in textwrap.wrap(name, width - 2)],
-            " " + CYAN + room_at(game.active_task) + RESET,
-        ]
-    else:
-        remaining = [p for p in game.assigned_tasks if p not in game.completed_tasks]
-        panel.append(panel_heading("ASSIGNMENTS", width))
-        for index, pos in enumerate(remaining[:5], start=1):
-            marker = "!" if manhattan(game.player_pos, pos) <= 1 else str(index)
-            panel.append(f" {YELLOW}{marker}{RESET} {TASK_NAMES[pos]}")
-            if layout.height >= 23:
-                panel.append("   " + CYAN + room_at(pos) + RESET)
+    panel = test_panel(game, width) + sabotage_panel(game, width) + (
+        impostor_panel(game, width) if game.player.role == "impostor" else crew_panel(game, layout, width))
 
     if game.player_alive:
         if (any(actor.alive and actor.vent_id is None and actor.pos in visible and manhattan(game.player_pos, actor.pos) <= 3
@@ -312,7 +342,7 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
         hint = MAGENTA + " Hidden | kill cooldown paused" + RESET
     elif game.active_task:
         hint = YELLOW + " Stay nearby until syncing finishes." + RESET
-    elif any(manhattan(game.player_pos, p) <= 1 for p in game.assigned_tasks if p not in game.completed_tasks):
+    elif any(manhattan(game.player_pos, p) <= 1 for p in own_tasks(game) if p not in game.completed_tasks):
         hint = YELLOW + " Press E to start the nearby task." + RESET
     elif any(manhattan(game.player_pos, b.pos) <= 1 for b in game.bodies):
         hint = RED + BOLD + " BODY FOUND — press R to report." + RESET
@@ -459,6 +489,7 @@ def render_help(game: Game) -> str:
         "T             chat (write during voting)",
         "H             close help",
         "Q             quit game",
+        *(["X / N         test: swap role / reset"] if game.test_mode else []),
         "",
         f"Finish {game.config.tasks_per_player} tasks or eject impostors.",
         f"Full map + panel: at least {MAP_W + 36}x{MAP_H + 8}.",

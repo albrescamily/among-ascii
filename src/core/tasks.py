@@ -32,11 +32,12 @@ class TaskState:
 
 class TaskSystem:
     def __init__(self, game: "Game") -> None:
-        self.states = {
-            actor.id: TaskState(game.rng.sample(list(TASK_POSITIONS), game.config.tasks_per_player)
-                                if actor.role == "crew" else [])
-            for actor in game.players
-        }
+        self.states = {actor.id: TaskState(self.assign(game) if actor.role == "crew" else [])
+                       for actor in game.players}
+
+    @staticmethod
+    def assign(game: "Game") -> list[Pos]:
+        return game.rng.sample(list(TASK_POSITIONS), game.config.tasks_per_player)
 
     def crew_progress(self, game: "Game") -> dict:
         """Shared progress for living crewmates, matching team task victory."""
@@ -51,7 +52,8 @@ class TaskSystem:
         state = self.states[player_id]
         available = [pos for pos in state.assigned if pos not in state.completed
                      and game.distance(actor.pos, pos) <= 1]
-        if not actor.alive or not available or player_id in game.sabotage.workers:
+        if (not actor.alive or actor.role != "crew" or not available
+                or player_id in game.sabotage.workers):
             return False
         target = min(available, key=lambda pos: game.distance(actor.pos, pos))
         if state.active == target:

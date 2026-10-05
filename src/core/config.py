@@ -75,8 +75,8 @@ class GameConfig:
                 raise ValueError(f"Invalid type or non-finite value for {field.name}")
         if not 1 <= self.player_count <= len(COLORS):
             raise ValueError("player_count must be between 1 and 12")
-        if self.play_mode not in {"game", "simulation"}:
-            raise ValueError("play_mode must be game or simulation")
+        if self.play_mode not in {"game", "simulation", "test"}:
+            raise ValueError("play_mode must be game, simulation or test")
         if not 0 <= self.impostor_count < self.player_count:
             raise ValueError("impostor_count must be smaller than player_count")
         if self.impostor_count and self.impostor_count * 2 >= self.player_count:

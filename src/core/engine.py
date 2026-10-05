@@ -26,6 +26,11 @@ class Game:
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="team" if self.config.task_win_mode == "player"
                                   else self.config.task_win_mode)
+        elif self.config.play_mode == "test":
+            # Sandbox: NPCs are idle dummies, nothing ends the round, abilities start ready.
+            self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
+                                  task_win_mode="disabled", initial_kill_cooldown=0.0,
+                                  initial_sabotage_cooldown=0.0)
         self.rng = random.Random(self.config.seed)
         self.world = ShipMap()
         self.grid = self.world.grid
@@ -38,7 +43,7 @@ class Game:
         self._entities = {actor.id: actor for actor in self.players}
         self.player = self.players[0]
         self.player_id = self.player.id
-        self.npcs = self.players[1:] if self.config.play_mode == "game" else []
+        self.npcs = self.players[1:] if self.config.play_mode != "simulation" else []
         pool = self.players if self.config.player_role == "random" else self.players[1:]
         impostors = []
         if self.config.player_role == "impostor":
@@ -175,7 +180,7 @@ class Game:
         self.emit("message", text, visible_to=[self.player_id])
 
     def move_interval(self, actor: Player) -> float:
-        if actor.id == self.player_id and self.config.play_mode == "game":
+        if actor.id == self.player_id and self.config.play_mode != "simulation":
             return self.config.player_move_seconds
         return self.config.impostor_move_seconds if actor.role == "impostor" else self.config.crew_move_seconds
 
@@ -292,7 +297,7 @@ class Game:
             if self.npc_system is not None:
                 self.npc_system.tick(self)
             self.check_parity()
-            if self.elapsed >= self.config.max_seconds and not self.outcome:
+            if self.elapsed >= self.config.max_seconds and not self.outcome and not self.test_mode:
                 self.outcome, self.outcome_reason = "timeout", "Episode time limit reached."
                 self.emit("episode_ended", self.outcome_reason, data={"winner": None})
 
@@ -343,8 +348,43 @@ class Game:
     def try_impostor_kill(self, impostor: Player) -> bool:
         return self.kill(impostor.id)
 
+    @property
+    def test_mode(self) -> bool:
+        return self.config.play_mode == "test"
+
+    def set_role(self, player_id: str, role: str) -> None:
+        """Test map: switch a player between crew and impostor on the spot."""
+        actor = self.entity(player_id)
+        if role not in ("crew", "impostor") or actor.role == role:
+            return
+        self.tasks.cancel(self, player_id)
+        self.sabotage.cancel_worker(player_id)
+        if actor.vent_id is not None:
+            actor.vent_id = None
+        actor.role = role
+        actor.kill_clock = 0.0
+        if role == "impostor":
+            self.impostor_ids.append(player_id)
+        else:
+            self.impostor_ids.remove(player_id)
+            state = self.tasks.states[player_id]
+            if not state.assigned:
+                state.assigned = self.tasks.assign(self)
+        self.message(f"Test: you are now {role.upper()}.")
+
+    def reset_test(self) -> None:
+        """Test map: revive everyone, clear bodies and emergencies, refill cooldowns."""
+        self.sabotage.clear(self)
+        self.sabotage.cooldown = 0.0
+        self.bodies.clear()
+        for actor in self.players:
+            actor.alive, actor.vent_id, actor.kill_clock = True, None, 0.0
+            actor.emergencies_left = self.config.emergencies_per_player
+            self.tasks.cancel(self, actor.id)
+        self.message("Test: crew revived, bodies and sabotage cleared, cooldowns reset.")
+
     def check_parity(self) -> None:
-        if self.outcome or not self.config.impostor_count:
+        if self.outcome or not self.config.impostor_count or self.test_mode:
             return
         impostors = sum(actor.alive and actor.role == "impostor" for actor in self.players)
         crew = sum(actor.alive and actor.role == "crew" for actor in self.players)
@@ -387,7 +427,9 @@ class Game:
     def visible_positions(self, player_id: Optional[str] = None) -> set[Pos]:
         actor = self.entity(player_id or self.player_id)
         visible: set[Pos] = set()
-        if actor.alive and actor.vent_id is None:
+        # A vented impostor still looks out through the grate; can_see stays false,
+        # so NPC logic and kill witnesses are unaffected.
+        if actor.alive:
             radius = self.vision_radius(actor.id)
             for y in range(max(0, actor.pos[1] - radius), min(MAP_H, actor.pos[1] + radius + 1)):
                 for x in range(max(0, actor.pos[0] - radius), min(MAP_W, actor.pos[0] + radius + 1)):
@@ -398,6 +440,9 @@ class Game:
 
     def finish(self, winner: str, reason: str) -> None:
         if self.outcome:
+            return
+        if self.test_mode:
+            self.message(f"Test: {winner} would win ({reason})")
             return
         self.winner = winner
         self.outcome = "victory" if self.player.role == winner else "defeat"

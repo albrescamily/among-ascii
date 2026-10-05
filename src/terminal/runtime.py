@@ -46,6 +46,8 @@ def pan_camera(game: Game, dx: int, dy: int) -> None:
 def stop_game(game: Game) -> None:
     if game.config.play_mode == "simulation":
         game.outcome, game.outcome_reason = "stopped", "Simulation stopped."
+    elif game.test_mode:
+        game.outcome, game.outcome_reason = "stopped", "Test map closed."
     else:
         game.lose("You left the mission.")
 
@@ -156,6 +158,10 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 game.report()
             elif key == "k":
                 game.kill(game.player_id)
+            elif game.test_mode and key == "x":
+                game.set_role(game.player_id, "crew" if game.player.role == "impostor" else "impostor")
+            elif game.test_mode and key == "n":
+                game.reset_test()
             elif key in SABOTAGE_KEYS:
                 trigger_sabotage(game, key)
             elif key == "v":

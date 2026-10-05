@@ -162,3 +162,5 @@ class SabotageSystem:
         self.remaining = max(0.0, self.remaining - dt)
         if self.remaining <= 1e-9:
             game.finish("impostor", f"{TITLES[self.kind]}: the crew ran out of time.")
+            if not game.outcome:  # Test map: the round goes on.
+                self.clear(game)

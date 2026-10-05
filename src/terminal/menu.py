@@ -8,6 +8,8 @@ from .palette import BOLD, CYAN, GRAY, GREEN, RESET, WHITE, YELLOW
 from .text import MIN_COLUMNS, MIN_ROWS, centered_screen, fit_line, terminal_size
 
 
+MODES = ("game", "simulation", "test")
+MODE_NAMES = {"game": "Game", "simulation": "Simulation", "test": "Test map"}
 MENU_ITEMS = ("play_mode", "player_count", "kill_cooldown", "tasks_per_player", "voting_seconds", "play", "quit")
 
 
@@ -36,7 +38,7 @@ def setting_row(label: str, value: int | float, unit: str = "") -> str:
 def render_setup(config: GameConfig, selected: int = 0,
                  size: tuple[int, int] | None = None) -> str:
     config = normalize_settings(config)
-    mode = "Simulation" if config.play_mode == "simulation" else "Game"
+    mode = MODE_NAMES[config.play_mode]
     rows = [
         f"Mode                  < {mode} >",
         setting_row("Total players", config.player_count),
@@ -60,6 +62,7 @@ def render_setup(config: GameConfig, selected: int = 0,
         "",
         f"{config.player_count} players | {config.impostor_count} impostors | {total} tasks total",
         "Simulation scaffold; no agent behavior." if config.play_mode == "simulation"
+        else "Sandbox: idle NPCs, X swaps crew/impostor." if config.play_mode == "test"
         else f"Play as {config.player_color}; other players are NPCs.",
         "",
         GRAY + "Up/Down or W/S: select | Left/Right: change" + RESET,
@@ -77,7 +80,7 @@ def adjust_setting(config: GameConfig, selected: int, direction: int) -> GameCon
     config = normalize_settings(config)
     option = MENU_ITEMS[selected]
     if option == "play_mode":
-        return replace(config, play_mode="simulation" if config.play_mode == "game" else "game")
+        return replace(config, play_mode=MODES[(MODES.index(config.play_mode) + direction) % len(MODES)])
     if option == "player_count":
         players = int(bounded_value(option, config.player_count + direction))
         return replace(config, player_count=players,

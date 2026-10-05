@@ -13,7 +13,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Among Ascii — terminal social-deduction game")
     parser.add_argument("--config", help="JSON settings file")
     parser.add_argument("--seed", type=int, help="deterministic random seed")
-    parser.add_argument("--mode", choices=["game", "simulation"], help="game with NPCs or inactive simulation scaffold")
+    parser.add_argument("--mode", choices=["game", "simulation", "test"],
+                        help="game with NPCs, inactive simulation scaffold, or test map sandbox")
     parser.add_argument("--players", type=int, help="total players, including the local player (1-12)")
     parser.add_argument("--impostors", type=int, help="number of impostors")
     parser.add_argument("--player-color", choices=[color.name for color in COLORS])
