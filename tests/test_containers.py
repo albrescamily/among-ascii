@@ -4,7 +4,7 @@ import unittest
 from src import Game, GameConfig
 from src.core.tasks import TASK_NAMES
 from src.core.world import CONTAINERS, FURNITURE, VENT_POSITIONS
-from src.terminal.palette import BLUE, GRAY
+from src.terminal.palette import BLUE, GRAY, YELLOW
 from src.terminal.text import ANSI_SGR, display_width
 from src.terminal.ui import expand_map_cell, map_cell, observer_map_cell
 
@@ -37,8 +37,10 @@ class ContainerTests(unittest.TestCase):
             for zoom in (1, 2):
                 live = map_cell(game, pos, {pos}, zoom=zoom)
                 observer = observer_map_cell(game, pos, zoom=zoom)
-                self.assertEqual(live, observer)
+                # Same shape in both views; the God view paints the ship yellow.
+                self.assertEqual(ANSI_SGR.sub("", live), ANSI_SGR.sub("", observer))
                 self.assertIn(BLUE, live)
+                self.assertIn(YELLOW, observer)
                 self.assertEqual(display_width(expand_map_cell(live, zoom)), zoom)
                 self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, set(), zoom=zoom)),
                                  ANSI_SGR.sub("", live))

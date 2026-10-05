@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from src import Game, GameConfig
 from src.core.world import EMERGENCY_POS
-from src.terminal.menu import adjust_setting, configure_game, normalize_settings, render_setup
+from src.terminal.menu import MENU_ITEMS, adjust_setting, configure_game, normalize_settings, render_setup
 from src.terminal.runtime import conduct_meeting, play_one, run
 from src.terminal.text import ANSI_SGR, display_width
 
@@ -14,7 +14,7 @@ class StartupTests(unittest.TestCase):
         terminal = Mock()
         terminal.read_keys.side_effect = [
             ["right"], ["down"], ["left"], ["down"], ["right", "right"],
-            ["down"], ["left"], ["down"], ["right"], ["down"], ["\r"],
+            ["down"], ["left"], ["down"], ["right"], ["down"], ["down"], ["down"], ["\r"],
         ]
         with patch("src.terminal.menu.time.sleep"):
             settings = configure_game(terminal, GameConfig())
@@ -60,7 +60,7 @@ class StartupTests(unittest.TestCase):
     def test_imported_settings_are_bounded_before_play(self):
         original = GameConfig(player_count=1, impostor_count=0, kill_cooldown=120, voting_seconds=180)
         terminal = Mock()
-        terminal.read_keys.return_value = ["down", "down", "down", "down", "down", "\r"]
+        terminal.read_keys.return_value = ["down"] * MENU_ITEMS.index("play") + ["\r"]
         selected = configure_game(terminal, original)
         self.assertEqual(selected, normalize_settings(original))
         self.assertEqual(selected.player_count, 4)
@@ -75,7 +75,7 @@ class StartupTests(unittest.TestCase):
         for mode in ("game", "simulation"):
             for size in ((60, 20), (80, 24), (120, 38), (230, 48)):
                 with self.subTest(mode=mode, size=size):
-                    screen = ANSI_SGR.sub("", render_setup(GameConfig(play_mode=mode), 5, size))
+                    screen = ANSI_SGR.sub("", render_setup(GameConfig(play_mode=mode), MENU_ITEMS.index("play"), size))
                     lines = screen.splitlines()
                     self.assertLessEqual(len(lines), size[1] - 1)
                     self.assertTrue(all(display_width(line) <= size[0] - 1 for line in lines))

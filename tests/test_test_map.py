@@ -1,18 +1,18 @@
-"""Test map sandbox: idle NPCs, no round end, role swap and reset."""
+"""Test mode sandbox: idle NPCs, no round end, role swap and reset."""
 import unittest
 from unittest.mock import Mock, patch
 
 from src import Action, Game, GameConfig
 from src.core.sabotage import PANELS
 from src.core.world import EMERGENCY_POS
-from src.terminal.menu import adjust_setting, MENU_ITEMS
+from src.terminal.menu import adjust_setting, MENU_ITEMS, render_setup
 from src.terminal.runtime import play_one
 from src.terminal.text import ANSI_SGR
 from src.terminal.ui import render_game, render_help, render_observer
 
 
 def make_game(**overrides):
-    return Game(config=GameConfig(play_mode="test", player_role="crew", seed=3, **overrides))
+    return Game(config=GameConfig(play_mode="game", test_mode=True, player_role="crew", seed=3, **overrides))
 
 
 def next_to(game, target):
@@ -88,6 +88,41 @@ class TestMapTests(unittest.TestCase):
 
 
 class TestMapTerminalTests(unittest.TestCase):
+    def test_minimap_shows_the_ship_and_you_but_hides_other_players(self):
+        from src.core.models import Body
+        from src.terminal.ui import minimap_cell, render_minimap
+        game = make_game()
+        npc = game.npcs[0]
+        npc.pos = (49, 15)
+        game.bodies.append(Body("x", "X", (50, 15), "Hallway", 0))
+        for pos in (npc.pos, (50, 15)):
+            self.assertNotIn(npc.symbol, ANSI_SGR.sub("", minimap_cell(game, pos)))
+            self.assertNotIn("†", ANSI_SGR.sub("", minimap_cell(game, pos)))
+        self.assertEqual(ANSI_SGR.sub("", minimap_cell(game, game.player_pos)), "@")
+        from src.terminal.palette import YELLOW
+        self.assertIn(YELLOW + "◆", minimap_cell(game, game.assigned_tasks[0]))
+        screen = ANSI_SGR.sub("", render_minimap(game, (130, 42)))
+        self.assertIn("MODE TEST / MINI MAP", screen)
+        self.assertIn("LEGEND", screen)
+
+    def view_screens(self, keys, caps):
+        game = make_game()
+        term = Mock()
+        term.read_keys.side_effect = keys
+        term.caps_lock.return_value = caps
+        with patch("src.terminal.runtime.Game", return_value=game), patch(
+                "src.terminal.text.shutil.get_terminal_size", return_value=(130, 42)), patch(
+                "src.terminal.runtime.time.monotonic", side_effect=range(100)):
+            play_one(term)
+        return [ANSI_SGR.sub("", call.args[0]).splitlines()[0] for call in term.draw.call_args_list]
+
+    def test_caps_lock_holds_god_view_and_tab_opens_the_minimap(self):
+        self.assertTrue(all("GOD VIEW" in s for s in self.view_screens([[], [], ["q"]], True)))
+        self.assertTrue(all("PLAYER VIEW" in s for s in self.view_screens([[], [], ["q"]], False)))
+        self.assertIn("MINI MAP", self.view_screens([["\t"], [], ["q"]], True)[-1])
+        # Without Caps Lock support, the ` key toggles the God view instead.
+        self.assertIn("GOD VIEW", self.view_screens([["`"], [], ["q"]], None)[-1])
+
     def test_crew_panel_lists_finished_tasks_in_green(self):
         from src.core.tasks import TASK_NAMES
         from src.terminal.palette import GREEN
@@ -112,14 +147,42 @@ class TestMapTerminalTests(unittest.TestCase):
         game.player_pos = next_to(game, Mock(pos=game.assigned_tasks[0]))
         self.assertFalse(game.interact())
 
-    def test_menu_cycles_to_test_map(self):
+    def test_test_mode_and_god_view_are_game_mode_options(self):
         config = GameConfig()
-        index = MENU_ITEMS.index("play_mode")
-        config = adjust_setting(config, index, 1)
-        self.assertEqual(config.play_mode, "simulation")
-        config = adjust_setting(config, index, 1)
-        self.assertEqual(config.play_mode, "test")
-        self.assertEqual(adjust_setting(config, index, 1).play_mode, "game")
+        mode = MENU_ITEMS.index("play_mode")
+        self.assertEqual(adjust_setting(config, mode, 1).play_mode, "simulation")
+        self.assertEqual(adjust_setting(adjust_setting(config, mode, 1), mode, 1).play_mode, "game")
+        god = MENU_ITEMS.index("allow_god_view")
+        config = adjust_setting(config, god, 1)
+        self.assertFalse(config.allow_god_view)
+        self.assertFalse(Game(config=config).god_view_allowed)
+        config = adjust_setting(config, MENU_ITEMS.index("test_mode"), 1)
+        self.assertTrue(config.test_mode)
+        self.assertTrue(Game(config=config).test_mode)
+        # The Test mode forces the God view on, and the menu option is locked.
+        self.assertTrue(Game(config=config).god_view_allowed)
+        self.assertEqual(adjust_setting(config, god, 1), config)
+        self.assertIn("On (test mode)", ANSI_SGR.sub("", render_setup(config, god)))
+        # Simulation ignores both; the menu marks them as game-only.
+        simulation = adjust_setting(config, mode, 1)
+        self.assertFalse(Game(config=simulation).test_mode)
+        self.assertEqual(adjust_setting(simulation, MENU_ITEMS.index("test_mode"), 1), simulation)
+        with self.assertRaises(ValueError):
+            GameConfig(play_mode="test")
+
+    def test_god_view_stays_closed_when_not_allowed(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False, allow_god_view=False))
+        term = Mock()
+        term.read_keys.side_effect = [[], ["`"], ["q"]]
+        term.caps_lock.return_value = True
+        with patch("src.terminal.runtime.Game", return_value=game), patch(
+                "src.terminal.text.shutil.get_terminal_size", return_value=(130, 42)), patch(
+                "src.terminal.runtime.time.monotonic", side_effect=range(100)):
+            play_one(term)
+        screens = [ANSI_SGR.sub("", call.args[0]) for call in term.draw.call_args_list]
+        self.assertTrue(all("PLAYER VIEW" in screen.splitlines()[0] for screen in screens))
+        self.assertNotIn("CAPS", screens[-1])
+        self.assertNotIn("Caps Lock", ANSI_SGR.sub("", render_help(game)))
 
     def test_keys_swap_role_and_reset(self):
         game = make_game()
@@ -140,7 +203,7 @@ class TestMapTerminalTests(unittest.TestCase):
         self.assertIn("MODE SIMULATION", simulation.splitlines()[0])
         self.assertNotIn("GOD VIEW", simulation.splitlines()[0])
         self.assertNotIn("BUTTONS", simulation.splitlines()[1])
-        self.assertIn("TEST MAP", plain)
+        self.assertIn("TEST MODE", plain)
         self.assertNotIn("TASKS 0/", plain.splitlines()[1])
         game.set_role(game.player_id, "crew")
         header = ANSI_SGR.sub("", render_game(game, (120, 38))).splitlines()[1]

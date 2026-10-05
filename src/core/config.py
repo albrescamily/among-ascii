@@ -20,6 +20,8 @@ MENU_LIMITS = {
 class GameConfig:
     seed: int = 7
     play_mode: str = "game"  # simulation is an inactive scaffold
+    test_mode: bool = False  # Game-mode sandbox: idle NPCs, role swap (X), reset (N)
+    allow_god_view: bool = True  # Caps Lock God view in Game mode; forced on by test_mode
     player_count: int = 12
     player_color: str = "Cyan"
     player_role: str = "crew"
@@ -59,7 +61,8 @@ class GameConfig:
         integers = {"seed", "player_count", "impostor_count", "tasks_per_player", "vision_radius", "lights_vision_radius",
                     "kill_radius", "emergencies_per_player", "event_history", "fps",
                     "chat_history", "chat_max_length"}
-        booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death", "sabotage_enabled"}
+        booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death", "sabotage_enabled",
+                    "test_mode", "allow_god_view"}
         strings = {"play_mode", "player_color", "player_role", "task_win_mode"}
         for field in fields(self):
             value = getattr(self, field.name)
@@ -75,8 +78,8 @@ class GameConfig:
                 raise ValueError(f"Invalid type or non-finite value for {field.name}")
         if not 1 <= self.player_count <= len(COLORS):
             raise ValueError("player_count must be between 1 and 12")
-        if self.play_mode not in {"game", "simulation", "test"}:
-            raise ValueError("play_mode must be game, simulation or test")
+        if self.play_mode not in {"game", "simulation"}:
+            raise ValueError("play_mode must be game or simulation")
         if not 0 <= self.impostor_count < self.player_count:
             raise ValueError("impostor_count must be smaller than player_count")
         if self.impostor_count and self.impostor_count * 2 >= self.player_count:

@@ -65,6 +65,17 @@ class Terminal:
             import ctypes
             ctypes.windll.kernel32.SetConsoleMode(self.output_handle, self.old_output_mode)
 
+    def caps_lock(self) -> Optional[bool]:
+        """Caps Lock state, or None where the terminal cannot report it.
+        Terminals never send Caps Lock as a key, so Windows asks the OS directly."""
+        if not self.is_windows:
+            return None
+        try:
+            import ctypes
+            return bool(ctypes.windll.user32.GetKeyState(0x14) & 1)  # VK_CAPITAL toggle bit
+        except (AttributeError, OSError):
+            return None
+
     def read_keys(self) -> list[str]:
         if self.is_windows:
             return self._read_windows()

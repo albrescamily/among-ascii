@@ -121,7 +121,7 @@ def sabotage_controls(game: Game, width: int) -> list[str]:
 def test_panel(game: Game, width: int) -> list[str]:
     if not game.test_mode:
         return []
-    return [panel_heading("TEST MAP", width, MAGENTA),
+    return [panel_heading("TEST MODE", width, MAGENTA),
             " " + keys_line([("X", "swap role"), ("N", "reset round")]), ""]
 
 
@@ -155,12 +155,16 @@ def cooldown_text(seconds: float) -> str:
     return GREEN + BOLD + "READY" + RESET if seconds <= 1e-9 else YELLOW + f"{math.ceil(seconds - 1e-9)}s" + RESET
 
 
-def mode_label(game: Game, god_view: bool) -> str:
+VIEW_NAMES = {"player": "PLAYER VIEW", "god": "GOD VIEW", "minimap": "MINI MAP"}
+VIEW_COLORS = {"player": CYAN, "god": YELLOW, "minimap": GREEN}
+
+
+def mode_label(game: Game, view_mode: str) -> str:
     """Play mode, plus which view is open; Simulation only has the spectator view."""
     if game.config.play_mode == "simulation":
         return "SIMULATION"
     mode = "TEST" if game.test_mode else "GAME"
-    return f"{mode} / {'GOD VIEW' if god_view else 'PLAYER VIEW'}"
+    return f"{mode} / {VIEW_NAMES[view_mode]}"
 
 
 def player_identity(game: Game) -> str:
@@ -180,9 +184,9 @@ def hud_row(fields: list[tuple[str, str]], width: int) -> str:
                     + "".join(fit_line(cell, column, pad=True) for cell in cells[1:]), width, pad=True)
 
 
-def hud_lines(game: Game, layout: ScreenLayout, view: str, *, god_view: bool) -> list[str]:
+def hud_lines(game: Game, layout: ScreenLayout, view: str, view_mode: str) -> list[str]:
     """Top HUD: title + mode, LOCATION / TIME / ALIVE / TASKS / VIEW, then the task bar or alarm."""
-    color = YELLOW if god_view else CYAN
+    color = VIEW_COLORS[view_mode]
     if game.config.play_mode == "simulation":
         location = f"{room_at(game.camera_pos)} {GRAY}(camera){RESET}"
         progress = game.tasks.crew_progress(game)
@@ -194,7 +198,7 @@ def hud_lines(game: Game, layout: ScreenLayout, view: str, *, god_view: bool) ->
         tasks = (f"{len(game.completed_tasks)}/{len(game.assigned_tasks)}"
                  if game.player.role == "crew" else "-")
     alive = f"{sum(actor.alive for actor in game.players)}/{len(game.players)}"
-    status = f"{GRAY}MODE{RESET} {color}{mode_label(game, god_view)}{RESET} "
+    status = f"{GRAY}MODE{RESET} {color}{mode_label(game, view_mode)}{RESET} "
     fields = [("LOCATION", location), ("TIME", clock_text(game.elapsed)), ("ALIVE", alive), ("TASKS", tasks)]
     if game.config.play_mode != "simulation":
         status = f"{GRAY}PLAYER{RESET} {player_identity(game)}   " + status
@@ -208,22 +212,28 @@ def hud_lines(game: Game, layout: ScreenLayout, view: str, *, god_view: bool) ->
     ]
 
 
+MAP_TITLES = {"player": "FIELD OF VIEW", "god": "LIVE", "minimap": "MINI MAP"}
+PANEL_TITLES = {"player": " MISSION CONTROL ", "god": " CREW STATUS ", "minimap": " MISSION CONTROL "}
+
+
 def render_map_layout(game: Game, panel: list[str], footer: list[str],
                       visible: Optional[set[Pos]] = None,
-                      size: Optional[tuple[int, int]] = None) -> str:
+                      size: Optional[tuple[int, int]] = None,
+                      view_mode: Optional[str] = None) -> str:
     size = size or terminal_size()
     if size[0] < MIN_COLUMNS or size[1] < MIN_ROWS:
         return fit_screen([], size)
-    layout = screen_layout(game, size, observer=visible is None)
-    border = RED if game.sabotage.kind else BLUE
+    view_mode = view_mode or ("god" if visible is None else "player")
+    layout = screen_layout(game, size, observer=view_mode != "player")
+    border = RED if game.sabotage.kind else YELLOW if view_mode == "god" else BLUE
     x0, y0 = camera_origin(game, layout)
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
-    lines = hud_lines(game, layout, view, god_view=visible is None)
-    map_title = f" {view} / {'LIVE' if visible is None else 'FIELD OF VIEW'} "
+    lines = hud_lines(game, layout, view, view_mode)
+    map_title = f" {view} / {MAP_TITLES[view_mode]} "
     top = "┌" + map_title[:layout.map_space].ljust(layout.map_space, "─")
     if layout.panel_width:
-        title = " CREW STATUS " if visible is None else " MISSION CONTROL "
+        title = PANEL_TITLES[view_mode]
         top += "┬" + title + "─" * max(0, layout.panel_width - len(title))
     lines.append(border + top + "┐" + RESET)
     x_padding = (layout.map_space - layout.map_columns * layout.zoom) // 2
@@ -233,8 +243,12 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
         if y_padding <= row < y_padding + layout.map_rows:
             for x in range(x0, x0 + layout.map_columns):
                 pos = (x, y0 + row - y_padding)
-                cell = (observer_map_cell(game, pos, zoom=layout.zoom) if visible is None
-                        else map_cell(game, pos, visible, zoom=layout.zoom))
+                if view_mode == "god":
+                    cell = observer_map_cell(game, pos, zoom=layout.zoom)
+                elif view_mode == "minimap":
+                    cell = minimap_cell(game, pos, zoom=layout.zoom)
+                else:
+                    cell = map_cell(game, pos, visible, zoom=layout.zoom)
                 cells.append(expand_map_cell(cell, layout.zoom))
         map_row = fit_line(" " * x_padding + "".join(cells), layout.map_space, pad=True)
         line = border + "│" + RESET + map_row
@@ -474,10 +488,15 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     else:
         hint = GRAY + " Gray: layout" + BLUE + "  Blue: in view  " + RESET + EMERGENCY_LEGEND
     footer = [
-        vent_hint(game) or " " + keys_line(MOVE_CONTROLS + [("TAB", "god view"), ("Z", "zoom"), ("P", "panel")]),
+        vent_hint(game) or " " + keys_line(MOVE_CONTROLS + [("TAB", "map"), *god_view_key(game),
+                                                            ("Z", "zoom"), ("P", "panel")]),
         align_status(hint, keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
     return render_map_layout(game, panel, footer, visible, size)
+
+
+def god_view_key(game: Game) -> list[tuple[str, str]]:
+    return [("CAPS", "god view")] if game.god_view_allowed else []
 
 
 MOVE_CONTROLS = [("WASD", "move"), ("E", "use"), ("R", "report"), ("V", "vent")]
@@ -496,20 +515,10 @@ def vent_hint(game: Game) -> str:
     return ""
 
 
-def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
-    """Render one omniscient cell for the live observer/debug screen."""
+def ship_cell(game: Game, pos: Pos, zoom: int, structure: str, floor: str = "·",
+              task: str = MAGENTA) -> str:
+    """Static ship layout (no characters): `structure` colors walls/doors, `task` your pending tasks."""
     x, y = pos
-    if game.player_alive and game.player_pos == pos:
-        symbol = game.player.symbol if game.config.play_mode == "simulation" else "@"
-        return BOLD + game.player.color + symbol + RESET
-
-    for npc in game.players[1:]:
-        if npc.alive and npc.pos == pos:
-            return BOLD + npc.color + npc.symbol + RESET
-    for body in game.bodies:
-        if body.pos == pos:
-            return BOLD + RED + "†" + RESET
-
     emergency_cell = sabotage_marker(game, pos) or alarm_terrain(game, pos, zoom)
     if emergency_cell is not None:
         return emergency_cell
@@ -517,16 +526,16 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
     if tile == " ":
         return " "
     if tile == "#":
-        return BLUE + "#" + RESET
+        return structure + "#" + RESET
     if tile == "O":
-        return container_cell(pos, BLUE, zoom)
+        return container_cell(pos, structure, zoom)
     if tile == "D":
-        return CYAN + DOOR_CELLS[pos].glyph + RESET
+        return structure + DOOR_CELLS[pos].glyph + RESET
     if tile == "T":
-        if pos in game.completed_tasks:
+        if pos in game.completed_tasks and own_tasks(game):
             return GREEN + "◇" + RESET
-        if pos in game.assigned_tasks:
-            return BOLD + YELLOW + "◆" + RESET
+        if pos in own_tasks(game):
+            return BOLD + task + "◆" + RESET
         return GRAY + "◇" + RESET
     if tile == "E":
         return BOLD + RED + "◉" + RESET
@@ -534,7 +543,29 @@ def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
         return MAGENTA + "▣" + RESET
     if pos in ROOM_LABELS:
         return WHITE + ROOM_LABELS[pos] + RESET
-    return DIM + GRAY + "·" + RESET
+    return DIM + GRAY + floor + RESET
+
+
+def observer_map_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
+    """God view: every character and body, on a yellow ship."""
+    if game.player_alive and game.player_pos == pos:
+        symbol = game.player.symbol if game.config.play_mode == "simulation" else "@"
+        return BOLD + game.player.color + symbol + RESET
+    for npc in game.players[1:]:
+        if npc.alive and npc.pos == pos:
+            return BOLD + npc.color + npc.symbol + RESET
+    for body in game.bodies:
+        if body.pos == pos:
+            return BOLD + RED + "†" + RESET
+    return ship_cell(game, pos, zoom, YELLOW)
+
+
+def minimap_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
+    """Mini map: the whole ship and your own position, but no other players or bodies."""
+    if game.player_alive and game.player_pos == pos:
+        glyph = "▣" if game.player.vent_id is not None else "@"
+        return BOLD + game.player.color + glyph + RESET
+    return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW)
 
 
 def npc_activity(npc: Player) -> str:
@@ -594,14 +625,35 @@ def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     panel += [""] + status
     controls = ([("WASD", "camera"), ("F/G/J/L", "sabotage"), ("[ ]", "pages"), ("Z", "zoom"), ("P", "panel")]
                 if game.config.play_mode == "simulation"
-                else MOVE_CONTROLS + [("TAB", "player view"), ("Z", "zoom"), ("P", "panel")])
+                else MOVE_CONTROLS + [("CAPS", "player view"), ("TAB", "map"), ("Z", "zoom"), ("P", "panel")])
     last = game.chat.messages[-1] if game.chat.messages else None
     footer = [
         (" " + keys_line(controls)) if game.config.play_mode == "simulation" else vent_hint(game) or " " + keys_line(controls),
         align_status(" " + (f"{last.color}: {last.text}" if last else GRAY + "┆/┄ open doors  " + RESET + EMERGENCY_LEGEND),
                      keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
-    return render_map_layout(game, panel, footer, size=size)
+    return render_map_layout(game, panel, footer, size=size, view_mode="god")
+
+
+MINIMAP_LEGEND = ["@ you", "◆ your task  ◇ task", "! sabotage  ◉ emergency button", "▣ vent  ┆/┄ door"]
+
+
+def render_minimap(game: Game, size: Optional[tuple[int, int]] = None) -> str:
+    """Mini map (Tab): full ship, your tasks and sabotages, without other players."""
+    size = size or terminal_size()
+    layout = screen_layout(game, size, observer=True)
+    width = layout.panel_width or 32
+    role = (impostor_panel(game, width, game.visible_positions()) if game.player.role == "impostor"
+            else crew_panel(game, layout, width))
+    legend = [panel_heading("LEGEND", width)] + [GRAY + " " + line + RESET for line in MINIMAP_LEGEND]
+    panel = stack_sections([test_panel(game, width), sabotage_panel(game, width), role, legend], layout.height, 0)
+    footer = [
+        vent_hint(game) or " " + keys_line(MOVE_CONTROLS + [("TAB", "close map"), *god_view_key(game),
+                                                            ("Z", "zoom"), ("P", "panel")]),
+        align_status(" " + GRAY + "Players are hidden on the map." + RESET,
+                     keys_line(GLOBAL_CONTROLS) + " ", layout.width),
+    ]
+    return render_map_layout(game, panel, footer, size=size, view_mode="minimap")
 
 
 def render_help(game: Game) -> str:
@@ -618,7 +670,8 @@ def render_help(game: Game) -> str:
         "L             sabotage Lights (crew vision)",
         "E at !        repair; stay still until done",
         "Reactor needs TWO players holding panels.",
-        "Tab           god view / player view",
+        "Tab           mini map (no players)",
+        *(["Caps Lock     god view while it is on"] if game.god_view_allowed else []),
         "Z             toggle map zoom (1X / 2X)",
         "P             show / hide side panel",
         "[ / ]         previous / next crew page",

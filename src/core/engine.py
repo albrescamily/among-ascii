@@ -26,7 +26,7 @@ class Game:
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="team" if self.config.task_win_mode == "player"
                                   else self.config.task_win_mode)
-        elif self.config.play_mode == "test":
+        elif self.config.test_mode:
             # Sandbox: NPCs are idle dummies, nothing ends the round, abilities start ready.
             self.config = replace(self.config, npc_ai_enabled=False, end_on_player_death=False,
                                   task_win_mode="disabled", initial_kill_cooldown=0.0,
@@ -58,7 +58,7 @@ class Game:
         self.tasks = TaskSystem(self)
         self.vents = VentSystem()
         self.sabotage = SabotageSystem(self)
-        self.npc_system = NPCSystem() if self.config.play_mode == "game" else None
+        self.npc_system = NPCSystem() if self.config.play_mode == "game" and not self.test_mode else None
         self.meetings = MeetingSystem()
         self.bodies: list[Body] = []
         self.elapsed = 0.0
@@ -350,10 +350,16 @@ class Game:
 
     @property
     def test_mode(self) -> bool:
-        return self.config.play_mode == "test"
+        """Test mode is a Game-mode option; Simulation ignores it."""
+        return self.config.play_mode == "game" and self.config.test_mode
+
+    @property
+    def god_view_allowed(self) -> bool:
+        """The Test mode always allows the God view, whatever `allow_god_view` says."""
+        return self.config.allow_god_view or self.test_mode
 
     def set_role(self, player_id: str, role: str) -> None:
-        """Test map: switch a player between crew and impostor on the spot."""
+        """Test mode: switch a player between crew and impostor on the spot."""
         actor = self.entity(player_id)
         if role not in ("crew", "impostor") or actor.role == role:
             return
@@ -373,7 +379,7 @@ class Game:
         self.message(f"Test: you are now {role.upper()}.")
 
     def reset_test(self) -> None:
-        """Test map: revive everyone, clear bodies and emergencies, refill cooldowns."""
+        """Test mode: revive everyone, clear bodies and emergencies, refill cooldowns."""
         self.sabotage.clear(self)
         self.sabotage.cooldown = 0.0
         self.bodies.clear()

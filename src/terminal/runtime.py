@@ -11,7 +11,7 @@ from .menu import configure_game
 from .chat import ChatView, render_chat
 from .text import MIN_COLUMNS, MIN_ROWS, terminal_size, fit_screen
 from .palette import RED, RESET
-from .ui import (render_game, render_observer, render_help, render_end, render_meeting,
+from .ui import (render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
                  render_vote_result, screen_layout, camera_origin, VOTE_KEYS, sabotage_alert)
 
 MOVE_KEYS = {
@@ -47,7 +47,7 @@ def stop_game(game: Game) -> None:
     if game.config.play_mode == "simulation":
         game.outcome, game.outcome_reason = "stopped", "Simulation stopped."
     elif game.test_mode:
-        game.outcome, game.outcome_reason = "stopped", "Test map closed."
+        game.outcome, game.outcome_reason = "stopped", "Test mode closed."
     else:
         game.lose("You left the mission.")
 
@@ -119,7 +119,8 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
     game = Game(seed=seed, config=config)
     help_open = False
     simulation = game.config.play_mode == "simulation"
-    observer_open = simulation
+    god_open = False      # Caps Lock on Windows; the ` key elsewhere.
+    minimap_open = False  # Tab
     chat_view = None
     last = time.monotonic()
     next_frame = last
@@ -139,6 +140,9 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
             time.sleep(0.03)
             continue
 
+        caps = term.caps_lock() if hasattr(term, "caps_lock") else None
+        if isinstance(caps, bool):
+            god_open = caps and game.god_view_allowed
         for key in term.read_keys():
             if chat_view is not None:
                 if chat_view.handle_key(game, key):
@@ -175,20 +179,22 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
             elif key in ("[", "]"):
                 game.observer_page += 1 if key == "]" else -1
             elif key == "z":
-                current_zoom = screen_layout(game, terminal_size(), observer=observer_open or simulation).zoom
+                observer = simulation or minimap_open or god_open
+                current_zoom = screen_layout(game, terminal_size(), observer=observer).zoom
                 game.map_zoom = 1 if current_zoom == 2 else 2
             elif key == "p":
                 game.panel_visible = not game.panel_visible
             elif key == "h":
                 help_open = not help_open
                 if help_open:
-                    observer_open = False
+                    minimap_open = False
             elif key == "t":
                 chat_view = ChatView()
             elif key == "\t":
-                observer_open = not observer_open
-                if observer_open:
-                    help_open = False
+                minimap_open = not minimap_open
+                help_open = False
+            elif key == "`" and not isinstance(caps, bool) and game.god_view_allowed:
+                god_open = not god_open  # Fallback where Caps Lock cannot be read.
             elif key in ("q", "escape"):
                 stop_game(game)
 
@@ -205,7 +211,11 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 screen = render_chat(game, chat_view)
             elif help_open:
                 screen = render_help(game)
-            elif observer_open or simulation:
+            elif simulation:
+                screen = render_observer(game)
+            elif minimap_open:
+                screen = render_minimap(game)
+            elif god_open:
                 screen = render_observer(game)
             else:
                 screen = render_game(game)

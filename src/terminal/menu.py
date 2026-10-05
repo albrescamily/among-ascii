@@ -8,9 +8,10 @@ from .palette import BOLD, CYAN, GRAY, GREEN, RESET, WHITE, YELLOW
 from .text import MIN_COLUMNS, MIN_ROWS, centered_screen, fit_line, terminal_size
 
 
-MODES = ("game", "simulation", "test")
-MODE_NAMES = {"game": "Game", "simulation": "Simulation", "test": "Test map"}
-MENU_ITEMS = ("play_mode", "player_count", "kill_cooldown", "tasks_per_player", "voting_seconds", "play", "quit")
+MODES = ("game", "simulation")
+MODE_NAMES = {"game": "Game", "simulation": "Simulation"}
+MENU_ITEMS = ("play_mode", "player_count", "kill_cooldown", "tasks_per_player", "voting_seconds",
+              "test_mode", "allow_god_view", "play", "quit")
 
 
 def bounded_value(name: str, value: int | float) -> int | float:
@@ -35,6 +36,13 @@ def setting_row(label: str, value: int | float, unit: str = "") -> str:
     return f"{label:<19} < {value:g}{unit} >"
 
 
+def toggle_row(label: str, value: bool, available: bool) -> str:
+    """On/Off setting; Game-only options read `game only` in Simulation."""
+    if not available:
+        return f"{label:<19}   {GRAY}game only{RESET}"
+    return f"{label:<19} < {'On' if value else 'Off'} >"
+
+
 def render_setup(config: GameConfig, selected: int = 0,
                  size: tuple[int, int] | None = None) -> str:
     config = normalize_settings(config)
@@ -45,6 +53,9 @@ def render_setup(config: GameConfig, selected: int = 0,
         setting_row("Impostor cooldown", config.kill_cooldown, "s"),
         setting_row("Tasks per crewmate", config.tasks_per_player),
         setting_row("Voting time", config.voting_seconds, "s"),
+        toggle_row("Test mode", config.test_mode, config.play_mode == "game"),
+        (f"{'Allow God view':<19}   On {GRAY}(test mode){RESET}" if config.test_mode and config.play_mode == "game"
+         else toggle_row("Allow God view", config.allow_god_view, config.play_mode == "game")),
         "[ PLAY ]",
         "[ QUIT ]",
     ]
@@ -52,7 +63,6 @@ def render_setup(config: GameConfig, selected: int = 0,
     content = [
         BOLD + WHITE + "AMONG-ASCII / THE SKELD" + RESET,
         GRAY + "Configure your next mission" + RESET,
-        "",
     ]
     for index, row in enumerate(rows):
         marker = "> " if index == selected else "  "
@@ -62,11 +72,10 @@ def render_setup(config: GameConfig, selected: int = 0,
         "",
         f"{config.player_count} players | {config.impostor_count} impostors | {total} tasks total",
         "Simulation scaffold; no agent behavior." if config.play_mode == "simulation"
-        else "Sandbox: idle NPCs, X swaps crew/impostor." if config.play_mode == "test"
+        else "Test mode: idle NPCs, X swaps crew/impostor." if config.test_mode
         else f"Play as {config.player_color}; other players are NPCs.",
         "",
-        GRAY + "Up/Down or W/S: select | Left/Right: change" + RESET,
-        GRAY + "Enter: select / Play | Q / Esc: quit" + RESET,
+        GRAY + "W/S select | A/D change | Enter play | Q quit" + RESET,
     ]
     inner = 54
     lines = [CYAN + "╔" + "═" * inner + "╗" + RESET]
@@ -91,6 +100,10 @@ def adjust_setting(config: GameConfig, selected: int, direction: int) -> GameCon
                        post_meeting_kill_cooldown=cooldown)
     if option == "tasks_per_player":
         return replace(config, tasks_per_player=int(bounded_value(option, config.tasks_per_player + direction)))
+    if option == "allow_god_view" and config.test_mode:
+        return config  # Locked on: the Test mode always allows the God view.
+    if option in ("test_mode", "allow_god_view") and config.play_mode == "game":
+        return replace(config, **{option: not getattr(config, option)})
     if option == "voting_seconds":
         return replace(config, voting_seconds=bounded_value(option, config.voting_seconds + 5 * direction))
     return config

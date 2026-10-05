@@ -6,7 +6,7 @@ from src import Action, Game, GameConfig
 from src.core.models import Body
 from src.core.sabotage import CRITICAL, PANELS, SABOTAGE_KEYS
 from src.core.world import EMERGENCY_POS, ROOM_LABELS
-from src.terminal.palette import BLUE, RED
+from src.terminal.palette import RED, YELLOW
 from src.terminal.runtime import play_one, trigger_sabotage
 from src.terminal.text import ANSI_SGR, display_width
 from src.terminal.ui import map_cell, observer_map_cell, render_game, render_observer
@@ -236,7 +236,7 @@ class SabotageTerminalTests(unittest.TestCase):
         for mode in ("game", "simulation"):
             game = make_game(mode)
             wall = (38, 1)
-            self.assertIn(BLUE, observer_map_cell(game, wall))
+            self.assertIn(YELLOW, observer_map_cell(game, wall))
             start(game, "reactor")
             game.tick(1)
             self.assertIn(RED, observer_map_cell(game, wall))
@@ -251,7 +251,7 @@ class SabotageTerminalTests(unittest.TestCase):
                         self.assertTrue(all(display_width(line) <= size[0] - 1 for line in screen.splitlines()))
                         self.assertNotIn("\x1b", plain)
             game.sabotage.clear(game)
-            self.assertIn(BLUE, observer_map_cell(game, wall))
+            self.assertIn(YELLOW, observer_map_cell(game, wall))
 
     def test_markers_do_not_reveal_hidden_players(self):
         game = make_game()
