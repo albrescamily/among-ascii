@@ -202,6 +202,22 @@ class VotingTimerTests(unittest.TestCase):
                 GameConfig.from_dict({name: value})
 
 
+class ChatLayoutTests(unittest.TestCase):
+    def test_own_messages_sit_right_and_others_left_without_live_label(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
+        game.meetings.call(game, "red")
+        game.chat.send(game, "red", "I saw Green vent")
+        game.chat.send(game, "cyan", "its orange")
+        for size in ((100, 30), (60, 20)):
+            lines = ANSI_SGR.sub("", render_chat(game, ChatView(), size)).splitlines()
+            mine = next(line for line in lines if "its orange" in line)
+            theirs = next(line for line in lines if "I saw Green vent" in line)
+            # Inside the frame: theirs starts at the left edge, mine is pushed right.
+            self.assertLess(theirs.index("I saw Green vent"), 20, size)
+            self.assertGreater(mine.index("its orange"), len(mine) // 3, size)
+            self.assertNotIn("Live", "\n".join(lines))
+
+
 class ChatTerminalTests(unittest.TestCase):
     def test_composer_preserves_case_backspace_and_blocks_commands(self):
         game = Game(config=GameConfig(npc_ai_enabled=False))
@@ -244,7 +260,7 @@ class ChatTerminalTests(unittest.TestCase):
                 self.assertLessEqual(len(lines), size[1] - 1)
                 self.assertTrue(all(display_width(line) <= size[0] - 1 for line in lines))
                 self.assertIn("Esc", screen)
-                self.assertIn("╚", screen)
+                self.assertTrue("╚" in screen or "╰" in screen)  # bottom frame still on screen
             voting = render_meeting(game, "cyan", body, size=size)
             plain_voting = ANSI_SGR.sub("", voting)
             self.assertIn("Red body found.", plain_voting)
