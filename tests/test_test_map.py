@@ -8,7 +8,7 @@ from src.core.world import EMERGENCY_POS
 from src.terminal.menu import adjust_setting, MENU_ITEMS
 from src.terminal.runtime import play_one
 from src.terminal.text import ANSI_SGR
-from src.terminal.ui import render_game, render_help
+from src.terminal.ui import render_game, render_help, render_observer
 
 
 def make_game(**overrides):
@@ -88,6 +88,16 @@ class TestMapTests(unittest.TestCase):
 
 
 class TestMapTerminalTests(unittest.TestCase):
+    def test_crew_panel_lists_finished_tasks_in_green(self):
+        from src.core.tasks import TASK_NAMES
+        from src.terminal.palette import GREEN
+        game = make_game()
+        done = game.assigned_tasks[0]
+        game.completed_tasks.add(done)
+        screen = render_game(game, (130, 42))
+        self.assertIn("Do your tasks.", ANSI_SGR.sub("", screen))
+        self.assertIn(GREEN + " ✓ " + TASK_NAMES[done], screen)
+
     def test_impostor_panel_replaces_task_info(self):
         game = make_game()
         crew_screen = ANSI_SGR.sub("", render_game(game, (120, 38)))
@@ -98,6 +108,7 @@ class TestMapTerminalTests(unittest.TestCase):
         self.assertNotIn("TASK PROGRESS", screen)
         self.assertNotIn("ASSIGNMENTS", screen)
         self.assertIn("Kill: READY", screen)
+        self.assertIn("Kill the crewmates.", screen)
         game.player_pos = next_to(game, Mock(pos=game.assigned_tasks[0]))
         self.assertFalse(game.interact())
 
@@ -120,7 +131,15 @@ class TestMapTerminalTests(unittest.TestCase):
         self.assertEqual(game.player.role, "impostor")
         self.assertEqual(game.outcome, "stopped")
         plain = ANSI_SGR.sub("", render_game(game, (120, 38)))
-        self.assertIn("TEST / CYAN / IMPOSTOR", plain)
+        self.assertIn("PLAYER CYAN / IMPOSTOR", plain)
+        self.assertIn("MODE TEST / PLAYER VIEW", plain)
+        self.assertIn("BUTTONS 1", plain.splitlines()[1])
+        god = ANSI_SGR.sub("", render_observer(game, (120, 38)))
+        self.assertIn("MODE TEST / GOD VIEW", god)
+        simulation = ANSI_SGR.sub("", render_observer(Game(config=GameConfig(play_mode="simulation")), (120, 38)))
+        self.assertIn("MODE SIMULATION", simulation.splitlines()[0])
+        self.assertNotIn("GOD VIEW", simulation.splitlines()[0])
+        self.assertNotIn("BUTTONS", simulation.splitlines()[1])
         self.assertIn("TEST MAP", plain)
         self.assertNotIn("TASKS 0/", plain.splitlines()[1])
         game.set_role(game.player_id, "crew")

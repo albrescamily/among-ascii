@@ -262,7 +262,7 @@ class RenderingTests(unittest.TestCase):
                 game.observer_page = page
                 screen = render_observer(game)
                 screens.append(screen)
-                self.assertIn("meeting", screen)
+                self.assertIn("Kill cooldown", screen)
             for actor in game.players:
                 self.assertIn(actor.name, "\n".join(screens))
 

@@ -52,9 +52,19 @@ class KnownMapTests(unittest.TestCase):
         for label in ("R E A C T O R", "N A V", "S T O R A G E"):
             self.assertIn(label, screen)
 
+    def test_floor_dots_only_mark_the_field_of_view(self):
+        game = Game(config=GameConfig(npc_ai_enabled=False, initial_sabotage_cooldown=0))
+        floor = (53, 30)
+        for sabotage in (False, True):
+            if sabotage:
+                game.apply_action(game.impostor_id, {"kind": "sabotage", "target": "admin"})
+            with self.subTest(sabotage=sabotage):
+                self.assertEqual(ANSI_SGR.sub("", map_cell(game, floor, {floor})), "·")
+                self.assertEqual(ANSI_SGR.sub("", map_cell(game, floor, set())), " ")
+
     def test_static_geometry_switches_between_gray_and_blue(self):
         game = Game(config=GameConfig(npc_ai_enabled=False))
-        samples = ((1, 16), (53, 31), (53, 30), next(iter(DOOR_CELLS)), next(iter(ROOM_LABELS)))
+        samples = ((1, 16), (53, 31), next(iter(DOOR_CELLS)), next(iter(ROOM_LABELS)))
         for pos in samples:
             with self.subTest(pos=pos):
                 unseen = map_cell(game, pos, set())
@@ -77,7 +87,7 @@ class KnownMapTests(unittest.TestCase):
         self.assertIn(GRAY, map_cell(game, (53, 35), visible))
         for pos in (actor.pos, body.pos):
             self.assertNotIn(pos, visible)
-            self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, visible)), "·")
+            self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, visible)), " ")
             self.assertIn(GRAY, map_cell(game, pos, visible))
         game.player_pos = (58, 36)
         visible = game.visible_positions()
@@ -87,7 +97,7 @@ class KnownMapTests(unittest.TestCase):
         visible = game.visible_positions()
         for pos in (actor.pos, body.pos):
             self.assertIn(pos, game.discovered)
-            self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, visible)), "·")
+            self.assertEqual(ANSI_SGR.sub("", map_cell(game, pos, visible)), " ")
 
 
 if __name__ == "__main__":

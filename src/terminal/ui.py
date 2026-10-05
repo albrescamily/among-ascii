@@ -48,8 +48,13 @@ def align_status(left: str, right: str, width: int) -> str:
     return fit_line(left, left_width, pad=True) + " " + fit_line(right, right_width)
 
 
-def panel_heading(title: str, width: int) -> str:
-    return CYAN + " " + title + " " + "─" * max(0, width - len(title) - 2) + RESET
+def panel_heading(title: str, width: int, color: str = CYAN) -> str:
+    return color + BOLD + " " + title + RESET + color + " " + "─" * max(0, width - len(title) - 2) + RESET
+
+
+def keys_line(pairs: list[tuple[str, str]]) -> str:
+    """`KEY action` hints with the key highlighted, used by panels and footers."""
+    return "  ".join(f"{BOLD}{WHITE}{key}{RESET} {GRAY}{label}{RESET}" for key, label in pairs)
 
 
 def expand_map_cell(cell: str, zoom: int) -> str:
@@ -79,36 +84,45 @@ def sabotage_alert(game: Game) -> str:
 
 
 def sabotage_panel(game: Game, width: int) -> list[str]:
+    """Live emergency status, shown in every view while a sabotage lasts."""
     system = game.sabotage
     if not system.kind:
-        if ((game.config.play_mode == "simulation" or game.player.role == "impostor")
-                and game.config.sabotage_enabled):
-            status = f"{math.ceil(system.cooldown - 1e-9)}s cooldown" if system.cooldown > 1e-9 else "READY"
-            return [panel_heading("SABOTAGE", width), f" {status}", " F Reactor  G O2  J Admin",
-                    " L Lights (Electrical)", ""]
         return []
-    lines = [RED + BOLD + (" CRITICAL EMERGENCY" if system.critical else " LIGHTS OUT") + RESET]
+    status = (f"{math.ceil(max(0, system.remaining - 1e-9))}s left" if system.critical
+              else "vision reduced")
+    lines = [panel_heading("CRITICAL EMERGENCY" if system.critical else "LIGHTS OUT", width, RED),
+             " " + BOLD + RED + TITLES[system.kind] + RESET + GRAY + " | " + RESET + YELLOW + status + RESET]
     for index, panel in enumerate(system.panels):
-        status = "OK" if index in system.completed else f"{system.progress.get(index, 0.0):.0%}"
-        if (system.kind == "reactor" and index in system.workers.values()
-                and not system.progress.get(index, 0.0)):
-            status = "HOLDING"
-        lines += [f" ! {panel.name}: {status}", f"   @ {panel.pos[0]},{panel.pos[1]}"]
+        progress = 1.0 if index in system.completed else system.progress.get(index, 0.0)
+        if index in system.completed:
+            state = GREEN + BOLD + "OK" + RESET
+        elif system.kind == "reactor" and index in system.workers.values() and not progress:
+            state = YELLOW + "HOLDING" + RESET
+        else:
+            state = f"{progress:.0%}"
+        name = f" {BOLD}{YELLOW}!{RESET} {panel.name} {GRAY}@{panel.pos[0]},{panel.pos[1]}{RESET}"
+        lines += [align_status(name, state + " ", width), "   " + progress_bar(progress, width - 4)]
     if system.kind == "reactor":
-        lines.append(" Two players, one per panel.")
-    elif not system.critical:
-        lines.append(" Crew vision reduced.")
-    if game.config.play_mode == "simulation":
-        lines += [" Awaiting crew repairs.", f" Hold time: {game.config.sabotage_repair_seconds:g}s.", ""]
-    else:
-        lines += [f" E: repair; stay {game.config.sabotage_repair_seconds:g}s.", " Move to cancel repair.", ""]
-    return lines
+        lines.append(GRAY + " Two players, one per panel." + RESET)
+    lines.append(GRAY + (" Awaiting crew repairs." if game.config.play_mode == "simulation"
+                         else f" E at ! and hold {game.config.sabotage_repair_seconds:g}s still.") + RESET)
+    return lines + [""]
+
+
+def sabotage_controls(game: Game, width: int) -> list[str]:
+    """Trigger keys and cooldown, for impostors and the simulation spectator."""
+    if not game.config.sabotage_enabled or game.sabotage.kind:
+        return []
+    return [align_status(" Sabotage", cooldown_text(game.sabotage.cooldown) + " ", width),
+            "   " + keys_line([("F", "Reactor"), ("G", "O2")]),
+            "   " + keys_line([("J", "Admin"), ("L", "Lights")])]
 
 
 def test_panel(game: Game, width: int) -> list[str]:
     if not game.test_mode:
         return []
-    return [panel_heading("TEST MAP", width), " X: swap crew / impostor", " N: revive + reset", ""]
+    return [panel_heading("TEST MAP", width, MAGENTA),
+            " " + keys_line([("X", "swap role"), ("N", "reset round")]), ""]
 
 
 def sabotage_marker(game: Game, pos: Pos) -> str | None:
@@ -126,8 +140,72 @@ def alarm_terrain(game: Game, pos: Pos, zoom: int, in_view: bool = True) -> str 
     if tile == "O":
         return container_cell(pos, color, zoom)
     glyph = {"#": "#", "D": DOOR_CELLS[pos].glyph if pos in DOOR_CELLS else "·",
-             "T": "◇", "V": "▣", "E": "◉", " ": " "}.get(tile, ROOM_LABELS.get(pos, "·"))
+             "T": "◇", "V": "▣", "E": "◉", " ": " "}.get(tile, ROOM_LABELS.get(pos, "·" if in_view else " "))
     return color + glyph + RESET
+
+
+EMERGENCY_LEGEND = BOLD + RED + "◉" + RESET + GRAY + " emergency button" + RESET
+
+
+def clock_text(seconds: float) -> str:
+    return f"{int(seconds // 60):02d}:{int(seconds % 60):02d}"
+
+
+def cooldown_text(seconds: float) -> str:
+    return GREEN + BOLD + "READY" + RESET if seconds <= 1e-9 else YELLOW + f"{math.ceil(seconds - 1e-9)}s" + RESET
+
+
+def mode_label(game: Game, god_view: bool) -> str:
+    """Play mode, plus which view is open; Simulation only has the spectator view."""
+    if game.config.play_mode == "simulation":
+        return "SIMULATION"
+    mode = "TEST" if game.test_mode else "GAME"
+    return f"{mode} / {'GOD VIEW' if god_view else 'PLAYER VIEW'}"
+
+
+def player_identity(game: Game) -> str:
+    """Local player's color and role, e.g. `CYAN / CREW`; marks ghosts."""
+    role_color = RED if game.player.role == "impostor" else CYAN
+    ghost = GRAY + " (ghost)" + RESET if not game.player_alive else ""
+    return (BOLD + game.player.color + game.player.name.upper() + RESET + GRAY + " / " + RESET
+            + BOLD + role_color + game.player.role.upper() + RESET + ghost)
+
+
+def hud_row(fields: list[tuple[str, str]], width: int) -> str:
+    """`LABEL value` columns: the first gets the room it needs, the rest share the width evenly."""
+    cells = [f" {GRAY}{label}{RESET} {value}" for label, value in fields]
+    first = min(width // 2, max(width // len(cells), display_width(cells[0]) + 3))
+    column = max(1, (width - first) // max(1, len(cells) - 1))
+    return fit_line(fit_line(cells[0], first, pad=True)
+                    + "".join(fit_line(cell, column, pad=True) for cell in cells[1:]), width, pad=True)
+
+
+def hud_lines(game: Game, layout: ScreenLayout, view: str, *, god_view: bool) -> list[str]:
+    """Top HUD: title + mode, LOCATION / TIME / ALIVE / TASKS / VIEW, then the task bar or alarm."""
+    color = YELLOW if god_view else CYAN
+    if game.config.play_mode == "simulation":
+        location = f"{room_at(game.camera_pos)} {GRAY}(camera){RESET}"
+        progress = game.tasks.crew_progress(game)
+        tasks = f"{progress['completed']}/{progress['total']}"
+    else:
+        x, y = game.player_pos
+        location = f"{room_at(game.player_pos)} {GRAY}@{x},{y}{RESET}"
+        # Impostors have no real tasks of their own.
+        tasks = (f"{len(game.completed_tasks)}/{len(game.assigned_tasks)}"
+                 if game.player.role == "crew" else "-")
+    alive = f"{sum(actor.alive for actor in game.players)}/{len(game.players)}"
+    status = f"{GRAY}MODE{RESET} {color}{mode_label(game, god_view)}{RESET} "
+    fields = [("LOCATION", location), ("TIME", clock_text(game.elapsed)), ("ALIVE", alive), ("TASKS", tasks)]
+    if game.config.play_mode != "simulation":
+        status = f"{GRAY}PLAYER{RESET} {player_identity(game)}   " + status
+        left = game.player.emergencies_left
+        fields.append(("BUTTONS", str(left) if left else GRAY + "0" + RESET))
+    fields.append(("VIEW", f"{layout.zoom}X {view}"))
+    return [
+        align_status(BOLD + color + " AMONG-ASCII / THE SKELD" + RESET, status, layout.width),
+        hud_row(fields, layout.width),
+        sabotage_alert(game) if game.sabotage.kind else crew_task_bar(game, layout.width),
+    ]
 
 
 def render_map_layout(game: Game, panel: list[str], footer: list[str],
@@ -141,26 +219,7 @@ def render_map_layout(game: Game, panel: list[str], footer: list[str],
     x0, y0 = camera_origin(game, layout)
     full_map = layout.map_columns == MAP_W and layout.map_rows == MAP_H
     view = "FULL MAP" if full_map else "CAMERA"
-    mode = ("SIMULATION" if game.config.play_mode == "simulation" else "GOD VIEW") if visible is None else f"{game.player.name.upper()} / {game.player.role.upper()}"
-    if game.test_mode:
-        mode = "TEST / " + mode
-    color = RED if visible is None else CYAN
-    clock = f"{int(game.elapsed // 60):02d}:{int(game.elapsed % 60):02d}"
-    tasks = f"TASKS {len(game.completed_tasks)}/{len(game.assigned_tasks)}"
-    position_status = f" {CYAN}{room_at(game.player_pos)}{RESET}  {GRAY}@ {game.player_pos[0]},{game.player_pos[1]}{RESET}"
-    if game.config.play_mode == "simulation":
-        position_status = f" {sum(actor.alive for actor in game.players)}/{len(game.players)} PLAYERS ALIVE"
-        progress = game.tasks.crew_progress(game)
-        tasks = f"TASKS {progress['completed']}/{progress['total']}"
-    elif game.player.role == "impostor":
-        tasks = ""  # Impostors have no real tasks of their own.
-    lines = [
-        align_status(BOLD + color + " AMONG-ASCII / THE SKELD" + RESET,
-                     f"{color}{mode}{RESET}  {clock} ", layout.width),
-        align_status(position_status,
-                     f"{tasks + '  |  ' if tasks else ''}{layout.zoom}X {view} ", layout.width),
-        sabotage_alert(game) if game.sabotage.kind else crew_task_bar(game, layout.width),
-    ]
+    lines = hud_lines(game, layout, view, god_view=visible is None)
     map_title = f" {view} / {'LIVE' if visible is None else 'FIELD OF VIEW'} "
     top = "┌" + map_title[:layout.map_space].ljust(layout.map_space, "─")
     if layout.panel_width:
@@ -210,39 +269,116 @@ def own_tasks(game: Game) -> list[Pos]:
     return game.assigned_tasks if game.player.role == "crew" else []
 
 
-def impostor_panel(game: Game, width: int) -> list[str]:
-    clock = game.player.kill_clock
-    kill = GREEN + "READY" + RESET if clock <= 1e-9 else f"{clock:.1f}s"
-    vent = "HIDDEN" if game.player.vent_id is not None else "V near a vent"
-    return [panel_heading("IMPOSTOR", width), f" Kill: {kill}  (K)", f" Vent: {vent}",
-            " Blend in: fake tasks.", ""]
+def impostor_panel(game: Game, width: int, visible: set[Pos]) -> list[str]:
+    actor = game.player
+    targets = [other for other in game.players if other.alive and other.role == "crew"
+               and other.vent_id is None and other.pos in visible]
+    in_range = any(manhattan(actor.pos, other.pos) <= game.config.kill_radius for other in targets)
+    if actor.vent_id is not None:
+        vent = MAGENTA + "hidden inside" + RESET
+    elif game.vents.observe(game, game.player_id)["nearby"]:
+        vent = CYAN + "V to enter" + RESET
+    else:
+        vent = GRAY + "none nearby" + RESET
+    sight = f"{len(targets)} in sight" + (RED + BOLD + "  IN RANGE" + RESET if in_range else "")
+    return [panel_heading("IMPOSTOR", width, RED),
+            BOLD + RED + " Kill the crewmates." + RESET, "",
+            align_status(" Kill: " + cooldown_text(actor.kill_clock), GRAY + "K " + RESET, width),
+            " Crew: " + sight,
+            " Vent: " + vent,
+            *sabotage_controls(game, width),
+            GRAY + " Blend in: fake tasks." + RESET, ""]
 
 
 def crew_panel(game: Game, layout: ScreenLayout, width: int) -> list[str]:
-    task_ratio = len(game.completed_tasks) / max(1, len(game.assigned_tasks))
-    panel = [
-        align_status(BOLD + WHITE + " TASK PROGRESS" + RESET, f"{task_ratio:.0%} ", width),
-        " " + progress_bar(task_ratio, width - 2),
-        f" {len(game.completed_tasks)} of {len(game.assigned_tasks)} tasks complete",
-        "",
-    ]
+    done, total = len(game.completed_tasks), len(game.assigned_tasks)
+    ratio = done / max(1, total)
+    panel = [panel_heading("CREWMATE", width),
+             BOLD + CYAN + " Do your tasks." + RESET, "",
+             panel_heading("TASK PROGRESS", width),
+             align_status(f" {done} of {total} complete", f"{ratio:.0%} ", width),
+             " " + progress_bar(ratio, width - 2), ""]
     if game.active_task:
-        name = TASK_NAMES[game.active_task]
-        panel += [
+        return panel + [
             BOLD + YELLOW + f" SYNCING... {game.task_progress:.0%}" + RESET,
             " " + progress_bar(game.task_progress, width - 2),
-            *[" " + line for line in textwrap.wrap(name, width - 2)],
-            " " + CYAN + room_at(game.active_task) + RESET,
-        ]
-    else:
-        remaining = [p for p in game.assigned_tasks if p not in game.completed_tasks]
-        panel.append(panel_heading("ASSIGNMENTS", width))
-        for index, pos in enumerate(remaining[:5], start=1):
-            marker = "!" if manhattan(game.player_pos, pos) <= 1 else str(index)
-            panel.append(f" {YELLOW}{marker}{RESET} {TASK_NAMES[pos]}")
-            if layout.height >= 23:
-                panel.append("   " + CYAN + room_at(pos) + RESET)
-    return panel
+            *[" " + line for line in textwrap.wrap(TASK_NAMES[game.active_task], width - 2)],
+            " " + CYAN + room_at(game.active_task) + RESET, ""]
+    remaining = sorted((pos for pos in game.assigned_tasks if pos not in game.completed_tasks),
+                       key=lambda pos: manhattan(game.player_pos, pos))
+    panel.append(panel_heading("ASSIGNMENTS", width))
+    if not remaining:
+        panel.append(GREEN + BOLD + " All tasks done!" + RESET)
+    shown = 5 if layout.height >= 23 else 3
+    for index, pos in enumerate(remaining[:shown], start=1):
+        near = manhattan(game.player_pos, pos) <= 1
+        marker = BOLD + YELLOW + "!" if near else GRAY + str(index)
+        panel.append(f" {marker}{RESET} {TASK_NAMES[pos]}")
+        if layout.height >= 23:
+            where = YELLOW + "here: press E" + RESET if near else GRAY + f"~{manhattan(game.player_pos, pos)} steps" + RESET
+            panel.append(align_status("   " + CYAN + room_at(pos) + RESET, where + " ", width))
+    if len(remaining) > shown:
+        panel.append(GRAY + f"   +{len(remaining) - shown} more (nearest first)" + RESET)
+    # Finished tasks stay listed, in green, below the ones still to do.
+    finished = [pos for pos in game.assigned_tasks if pos in game.completed_tasks]
+    for pos in finished[:shown]:
+        panel.append(GREEN + " ✓ " + TASK_NAMES[pos] + RESET)
+    if len(finished) > shown:
+        panel.append(GREEN + f"   +{len(finished) - shown} more done" + RESET)
+    return panel + [""]
+
+
+def nearby_panel(game: Game, width: int, visible: set[Pos]) -> list[str]:
+    """Players and bodies currently in sight, nearest first; roles stay hidden."""
+    if not game.player_alive:
+        return []
+    people = sorted((actor for actor in game.players[1:]
+                     if actor.alive and actor.vent_id is None and actor.pos in visible),
+                    key=lambda actor: manhattan(game.player_pos, actor.pos))
+    bodies = [body for body in game.bodies if body.pos in visible]
+    if not people and not bodies:
+        return []
+    lines = [panel_heading("IN SIGHT", width)]
+    for body in bodies[:2]:
+        near = manhattan(game.player_pos, body.pos) <= 1
+        lines.append(align_status(f" {BOLD}{RED}†{RESET} {body.victim_name}'s body",
+                                  (RED + BOLD + "R report" if near else GRAY + "body") + RESET + " ", width))
+    for actor in people[:4]:
+        lines.append(align_status(f" {BOLD}{actor.color}{actor.symbol}{RESET} {actor.name}",
+                                  GRAY + f"{manhattan(game.player_pos, actor.pos)} away" + RESET + " ", width))
+    if len(people) > 4:
+        lines.append(GRAY + f"   +{len(people) - 4} more" + RESET)
+    return lines + [""]
+
+
+def events_panel(game: Game, width: int) -> list[str]:
+    lines = [panel_heading("RECENT EVENTS", width)]
+    for message in list(game.messages)[:4]:
+        for index, line in enumerate(textwrap.wrap(message, width - 3)):
+            lines.append((GRAY + " › " + RESET if index == 0 else "   ") + line)
+    return lines
+
+
+def stack_sections(sections: list[list[str]], height: int, reserve: int = 3) -> list[str]:
+    """Add sections in priority order; the first one that does not fit is cut short and
+    lower-priority sections are dropped. The last section fills whatever is left."""
+    panel: list[str] = []
+    for section in sections[:-1]:
+        room = height - reserve - len(panel)
+        if len(section) > room:
+            panel += section[:max(0, room)]
+            break
+        panel += section
+    return (panel + sections[-1])[:height]
+
+
+def player_panel(game: Game, layout: ScreenLayout, width: int, visible: set[Pos]) -> list[str]:
+    role = (impostor_panel(game, width, visible) if game.player.role == "impostor"
+            else crew_panel(game, layout, width))
+    ghost = ([panel_heading("GHOST", width, GRAY), GRAY + " You died: spectating." + RESET, ""]
+             if not game.player_alive else [])
+    return stack_sections([test_panel(game, width), sabotage_panel(game, width), ghost, role,
+                           nearby_panel(game, width, visible), events_panel(game, width)], layout.height)
 
 
 def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
@@ -282,7 +418,8 @@ def map_cell(game: Game, pos: Pos, visible: set[Pos], *, zoom: int = 1) -> str:
         elif tile == "V":
             glyph = "▣"
         else:
-            glyph = "#" if tile == "#" else ROOM_LABELS.get(pos, "·")
+            # Floor dots only mark the field of view; unseen floor stays blank.
+            glyph = "#" if tile == "#" else ROOM_LABELS.get(pos, " ")
         return GRAY + glyph + RESET
     if tile == "#":
         return BLUE + "#" + RESET
@@ -310,23 +447,7 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     layout = screen_layout(game, size)
     width = layout.panel_width or 32
     visible = game.visible_positions()
-    panel = test_panel(game, width) + sabotage_panel(game, width) + (
-        impostor_panel(game, width) if game.player.role == "impostor" else crew_panel(game, layout, width))
-
-    if game.player_alive:
-        if (any(actor.alive and actor.vent_id is None and actor.pos in visible and manhattan(game.player_pos, actor.pos) <= 3
-                for actor in game.npcs) and len(panel) < layout.height - 3):
-            panel.append(RED + BOLD + " MOVEMENT NEARBY..." + RESET)
-
-    if len(panel) < layout.height - 3:
-        panel.append("")
-    panel.append(panel_heading("RECENT EVENTS", width))
-    for message in list(game.messages)[:4]:
-        wrapped = textwrap.wrap(message, width - 3)
-        for index, line in enumerate(wrapped):
-            if len(panel) >= layout.height:
-                break
-            panel.append((" › " if index == 0 else "   ") + line)
+    panel = player_panel(game, layout, width, visible)
 
     if game.sabotage.kind and game.player_id in game.sabotage.workers:
         hint = YELLOW + (" Hold still: BOTH scanners need a player." if game.sabotage.kind == "reactor"
@@ -337,7 +458,9 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
         hint = RED + (" Emergency: reach the ! panels and press E." if game.sabotage.critical
                       else " Lights out: fix the ! panel in Electrical.") + RESET
     elif game.player.role == "impostor" and game.config.sabotage_enabled:
-        hint = RED + " Sabotage: F Reactor / G O2 / J Admin / L Lights" + RESET
+        hint = RED + " Sabotage ready: F Reactor / G O2 / J Admin / L Lights" + RESET
+        if game.sabotage.cooldown > 1e-9:
+            hint = GRAY + f" Sabotage in {math.ceil(game.sabotage.cooldown - 1e-9)}s" + RESET
     elif game.player.vent_id is not None:
         hint = MAGENTA + " Hidden | kill cooldown paused" + RESET
     elif game.active_task:
@@ -349,12 +472,16 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     elif manhattan(game.player_pos, EMERGENCY_POS) <= 1 and game.emergency_available:
         hint = RED + " E: call an emergency meeting." + RESET
     else:
-        hint = GRAY + " Gray: layout" + BLUE + "  Blue: in view" + RESET
+        hint = GRAY + " Gray: layout" + BLUE + "  Blue: in view  " + RESET + EMERGENCY_LEGEND
     footer = [
-        vent_hint(game) or " WASD move E use R report V vent TAB view Z zoom P panel",
-        align_status(hint, "T history  H help  Q quit ", layout.width),
+        vent_hint(game) or " " + keys_line(MOVE_CONTROLS + [("TAB", "god view"), ("Z", "zoom"), ("P", "panel")]),
+        align_status(hint, keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
     return render_map_layout(game, panel, footer, visible, size)
+
+
+MOVE_CONTROLS = [("WASD", "move"), ("E", "use"), ("R", "report"), ("V", "vent")]
+GLOBAL_CONTROLS = [("T", "history"), ("H", "help"), ("Q", "quit")]
 
 
 def vent_hint(game: Game) -> str:
@@ -420,51 +547,59 @@ def npc_activity(npc: Player) -> str:
     return "EN ROUTE" if npc.path else "SCANNING"
 
 
+def manifest_entry(game: Game, actor: Player, width: int) -> str:
+    """One line per player: who, role, and where they are right now."""
+    symbol = "@" if actor.id == game.player_id and game.config.play_mode != "simulation" else actor.symbol
+    role = RED + "IMPOSTOR" + RESET if actor.role == "impostor" else CYAN + "CREW    " + RESET
+    if not actor.alive:
+        return align_status(f" {GRAY}{symbol} {actor.name:<7}{RESET}{role}", GRAY + "dead " + RESET, width)
+    if actor.vent_id is not None:
+        place = MAGENTA + "in vent" + RESET
+    elif actor.id in game.sabotage.workers:
+        place = YELLOW + "repairing" + RESET
+    else:
+        place = CYAN + room_at(actor.pos) + RESET
+    return align_status(f" {BOLD}{actor.color}{symbol}{RESET} {actor.color}{actor.name:<7}{RESET}{role}",
+                        place + " ", width)
+
+
+def ship_status(game: Game, width: int) -> list[str]:
+    """Only what the map and HUD do not already show."""
+    lines = [panel_heading("SHIP STATUS", width),
+             align_status(" Kill cooldown", cooldown_text(game.kill_cooldown) + " ", width)]
+    if game.bodies:
+        lines.append(align_status(" Bodies unreported", RED + str(len(game.bodies)) + RESET + " ", width))
+    if game.config.play_mode == "simulation" or game.player.role == "impostor":
+        lines += sabotage_controls(game, width)
+    return lines
+
+
 def render_observer(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     """God view: reveal the whole ship, players, bodies and crew state."""
     size = size or terminal_size()
     layout = screen_layout(game, size, observer=True)
     width = layout.panel_width or 32
-    emergency_panel = sabotage_panel(game, width)
-    available = max(1, layout.height - 5 - len(emergency_panel))
-    detail_rows = 3 if available >= len(game.players) * 3 else 2 if available >= len(game.players) * 2 else 1
-    page_size = max(1, available // detail_rows)
-    pages = (len(game.players) + page_size - 1) // page_size
+    top = test_panel(game, width) + sabotage_panel(game, width)
+    status = ship_status(game, width)
+    note = [GRAY + " NO CONTROLLERS: agents inactive" + RESET] if game.config.play_mode == "simulation" else []
+    # Living players first, then the dead; one line each.
+    roster = sorted(game.players, key=lambda actor: not actor.alive)
+    page_size = max(1, layout.height - len(top) - len(status) - len(note) - 2)
+    pages = (len(roster) + page_size - 1) // page_size
     page = game.observer_page % pages
-    first = page * page_size
-    panel = emergency_panel + [panel_heading(f"CREW MANIFEST {page + 1}/{pages}", width)]
-
-    for npc in game.players[first:first + page_size]:
-        role = "IMPOSTOR" if npc.role == "impostor" else "CREW"
-        role_color = RED if npc.role == "impostor" else npc.color
-        state = ("VENT" if npc.vent_id is not None else "ALIVE") if npc.alive else "DEAD"
-        symbol = "@" if npc.id == game.player_id and game.config.play_mode == "game" else npc.symbol
-        panel.append(f" {npc.color}{symbol} {npc.name:<6}{RESET} {role_color}{role:<8}{RESET} {state}")
-        if detail_rows >= 2:
-            if game.config.play_mode == "simulation":
-                controller = "NO CONTROLLER"
-                panel.append("   " + controller)
-            else:
-                panel.append(f"   {room_at(npc.pos)} {npc.pos!s}")
-        if detail_rows >= 3:
-            show_goal = game.config.play_mode == "game"
-            goal = f" → {npc.goal}" if npc.alive and npc.goal and show_goal else ""
-            activity = ("INACTIVE" if game.config.play_mode == "simulation" else
-                        "REPAIRING" if npc.id in game.sabotage.workers else npc_activity(npc))
-            panel.append(f"   {GRAY}{activity}{goal}{RESET}")
-
-    panel += [
-        panel_heading("SHIP STATUS", width),
-        f" bodies {len(game.bodies)} | kill CD {game.kill_cooldown:04.1f}s",
-        f" tasks {game.tasks.crew_progress(game)['completed']}/{game.tasks.crew_progress(game)['total']}",
-        f" meeting {'PENDING' if game.pending_meeting else 'none'}",
-    ]
+    alive = sum(actor.alive for actor in game.players)
+    title = f"CREW MANIFEST {alive}/{len(game.players)}" + (f"  p{page + 1}/{pages}" if pages > 1 else "")
+    panel = top + [panel_heading(title, width)] + note
+    panel += [manifest_entry(game, actor, width) for actor in roster[page * page_size:(page + 1) * page_size]]
+    panel += [""] + status
+    controls = ([("WASD", "camera"), ("F/G/J/L", "sabotage"), ("[ ]", "pages"), ("Z", "zoom"), ("P", "panel")]
+                if game.config.play_mode == "simulation"
+                else MOVE_CONTROLS + [("TAB", "player view"), ("Z", "zoom"), ("P", "panel")])
+    last = game.chat.messages[-1] if game.chat.messages else None
     footer = [
-        " WASD camera | F/G/J/L sabotage | Z zoom P panel" if game.config.play_mode == "simulation"
-        else vent_hint(game) or " WASD move E use R report V vent TAB back Z zoom P panel",
-        align_status(" " + (f"{game.chat.messages[-1].color}: {game.chat.messages[-1].text}"
-                            if game.chat.messages else "[ / ] crew pages   ┆/┄ open doors"),
-                     "T history  H help  Q quit ", layout.width),
+        (" " + keys_line(controls)) if game.config.play_mode == "simulation" else vent_hint(game) or " " + keys_line(controls),
+        align_status(" " + (f"{last.color}: {last.text}" if last else GRAY + "┆/┄ open doors  " + RESET + EMERGENCY_LEGEND),
+                     keys_line(GLOBAL_CONTROLS) + " ", layout.width),
     ]
     return render_map_layout(game, panel, footer, size=size)
 
@@ -476,6 +611,7 @@ def render_help(game: Game) -> str:
         "",
         "WASD / arrows move",
         "E             use / interact",
+        "◉             emergency button: E to call",
         "R             report a body; K to kill",
         "V             vent in/out; 1/2 travel inside",
         "F / G / J     sabotage Reactor / O2 / Admin",
