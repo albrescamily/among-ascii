@@ -1,5 +1,4 @@
 from __future__ import annotations
-import math
 import sys
 import time
 from typing import Optional
@@ -12,7 +11,7 @@ from .driver import Terminal
 from .menu import configure_game
 from .chat import ChatView, render_chat
 from .text import MIN_COLUMNS, MIN_ROWS, terminal_size, fit_screen
-from .palette import RED, RESET, YELLOW
+from .palette import RED, RESET
 from .ui import (door_actor, render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
                  render_vote_result, screen_layout, camera_origin, VOTE_KEYS, sabotage_alert)
 
@@ -97,21 +96,19 @@ def conduct_meeting(term: Terminal, game: Game) -> None:
             if key in ("t", "\t"):  # Tab toggles between the ballot and the chat.
                 chat_view = meeting_chat
             elif not automatic and (key == "0" or key in VOTE_KEYS):
-                if not game.meetings.voting_open:
-                    prompt = YELLOW + f"Voting opens in {math.ceil(game.meetings.phase_remaining)}s." + RESET
-                    continue
-                if game.player_id in game.meetings.votes:
-                    prompt = "Vote recorded | waiting for other votes"
+                # The ballot screen derives its status line (discussion countdown, your
+                # vote) from the meeting state each frame, so nothing here can go stale.
+                if not game.meetings.voting_open or game.player_id in game.meetings.votes:
                     continue
                 if key == "0":
                     game.apply_action(game.player_id, "vote")
-                    prompt = "Skip recorded | waiting for other votes"
+                    prompt = ""
                     continue
                 index = VOTE_KEYS.index(key)
                 ids = game.alive_ids()
                 if index < len(ids):
                     game.apply_action(game.player_id, {"kind": "vote", "target": ids[index]})
-                    prompt = "Vote recorded | waiting for other votes"
+                    prompt = ""
                 else:
                     prompt = RED + "Choose one of the displayed keys." + RESET
         time.sleep(0.03)

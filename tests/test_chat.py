@@ -240,6 +240,47 @@ class DiscussionPhaseTests(unittest.TestCase):
         self.assertNotIn("red", game.meetings.last_result[1])
 
 
+class MeetingStateTextTests(unittest.TestCase):
+    def test_discussion_notice_does_not_survive_into_voting(self):
+        game = Game(config=GameConfig(discussion_seconds=1, voting_seconds=30, vote_result_seconds=0.1))
+        game.meetings.call(game, "red")
+        keys = iter([["2"]])  # pressed while still talking
+        term = Mock()
+        term.read_keys.side_effect = lambda: next(keys, [])
+        with patch.object(game.meetings, "bot_vote", return_value=None), \
+                patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.5)), \
+                patch("src.terminal.runtime.time.sleep"):
+            conduct_meeting(term, game)
+        ballots = [ANSI_SGR.sub("", call.args[0]) for call in term.draw.call_args_list
+                   if "VOTE " in ANSI_SGR.sub("", call.args[0])]
+        self.assertTrue(ballots)
+        self.assertFalse(any("Voting opens" in screen for screen in ballots))
+
+    def test_ghosts_and_spectators_are_not_told_to_vote(self):
+        for config in (GameConfig(discussion_seconds=0), GameConfig(play_mode="simulation", discussion_seconds=0)):
+            game = Game(config=config)
+            if config.play_mode == "game":
+                game.player.alive = False
+            game.meetings.call(game, game.alive_ids()[0])
+            screen = ANSI_SGR.sub("", render_meeting(game, game.alive_ids()[0], None, size=(80, 24)))
+            self.assertIn("you cannot vote", screen)
+            self.assertNotIn("Pick a key", screen)
+            self.assertNotIn("1-9/A-C vote", screen)
+
+    def test_result_names_the_role_of_whoever_was_ejected(self):
+        from src.terminal.ui import render_vote_result
+        for mode, role, expected in (("game", "impostor", "You were the impostor."),
+                                     ("game", "crew", "You were not the impostor."),
+                                     ("simulation", "impostor", "They were the impostor.")):
+            game = Game(config=GameConfig(play_mode=mode, player_role=role, npc_ai_enabled=False,
+                                          discussion_seconds=0))
+            game.meetings.call(game, "red")
+            ejected, counts = game.meetings.resolve(game, {actor: "cyan" for actor in game.alive_ids()})
+            with patch("src.terminal.text.shutil.get_terminal_size", return_value=(80, 24)):
+                screen = ANSI_SGR.sub("", render_vote_result(game, ejected, counts))
+            self.assertIn(expected, screen, (mode, role))
+
+
 class ChatLayoutTests(unittest.TestCase):
     def test_own_messages_sit_right_and_others_left_without_live_label(self):
         game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))

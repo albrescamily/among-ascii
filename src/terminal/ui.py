@@ -821,20 +821,31 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
     if dead:
         content.append(GRAY + " ✕ Dead: " + ", ".join(actor.name for actor in dead) + RESET)
     content.append(None)
-    content.append(f" {BOLD}{WHITE}[0]{RESET} Skip vote  {GRAY}· no vote at timeout = skip{RESET}")
+    # Only a living player in Game mode has a ballot; ghosts and spectators watch.
+    can_vote = game.config.play_mode != "simulation" and game.player_alive
+    if can_vote:
+        content.append(f" {BOLD}{WHITE}[0]{RESET} Skip vote  {GRAY}· no vote at timeout = skip{RESET}")
+    else:
+        content.append(GRAY + " Missing ballots count as skips." + RESET)
     if game.player_id in meetings.votes:
         choice = meetings.votes[game.player_id]
         target = (game.entity(choice).color + game.name_of(choice) + RESET) if choice else GRAY + "Skip" + RESET
         content.append(" " + GREEN + BOLD + "✓ Your vote: " + RESET + target
                        + GRAY + "  · waiting for the others" + RESET)
-    elif prompt:
+    elif not can_vote:
+        watcher = ("Spectating: you cannot vote." if game.config.play_mode == "simulation"
+                   else "You are dead: you cannot vote.")
+        phase_note = f" Voting opens in {remaining}s." if discussion else ""
+        content.append(" " + GRAY + watcher + phase_note + RESET)
+    elif prompt and not discussion:
         content.append(" " + prompt)
     elif discussion:
         content.append(" " + CYAN + f"Voting opens in {remaining}s." + RESET
                        + GRAY + " Talk now: T or Tab chat." + RESET)
     else:
         content.append(" " + GRAY + "Pick a key to vote. Talk first: T or Tab chat." + RESET)
-    content.append(GRAY + " 1-9/A-C vote · 0 skip · T/Tab chat · Q/Esc quit" + RESET)
+    content.append(GRAY + (" 1-9/A-C vote · 0 skip · T/Tab chat · Q/Esc quit" if can_vote
+                           else " T/Tab chat · Q/Esc quit") + RESET)
 
     title = " EMERGENCY MEETING "
     lines = [RED + "╭─" + BOLD + title + RESET + RED + "─" * (inner - len(title) - 1) + "╮" + RESET]
@@ -886,7 +897,9 @@ def render_vote_result(
         outcome = [BOLD + WHITE + "Nobody was ejected." + RESET, GRAY + why + RESET]
     else:
         actor = game.entity(ejected)
-        who = "You were" if ejected == game.player_id else "They were"
+        # The simulation spectator is not a player: never "You were" there.
+        you = ejected == game.player_id and game.config.play_mode != "simulation"
+        who = "You were" if you else "They were"
         verdict = "the impostor." if actor.role == "impostor" else "not the impostor."
         outcome = [BOLD + actor.color + actor.name + RESET + BOLD + " was ejected." + RESET,
                    (RED if actor.role == "impostor" else GRAY) + f"{who} {verdict}" + RESET
