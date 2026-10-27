@@ -2,10 +2,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from .models import EPSILON, Pos
+from ..models import EPSILON, Pos
 
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,6 @@ PANELS = {
 }
 TITLES = {"reactor": "REACTOR MELTDOWN", "o2": "OXYGEN DEPLETED", "admin": "ADMIN SYSTEM FAILURE",
           "lights": "LIGHTS OUT"}
-SABOTAGE_KEYS = {"f": "reactor", "g": "o2", "j": "admin", "l": "lights"}
 # Critical emergencies run a countdown, lock the emergency button and stop tasks.
 CRITICAL = frozenset({"reactor", "o2", "admin"})
 
@@ -108,26 +107,6 @@ class SabotageSystem:
         game.emit("sabotage_cancelled" if reported else "sabotage_repaired",
                   "Emergency ended by body report." if reported else f"{TITLES[kind]} resolved. Systems restored.",
                   data={"kind": kind})
-
-    def npc_goal(self, game: "Game", actor_id: str) -> Pos | None:
-        """Assign only the responders needed; reserve different stations."""
-        for assigned, index in list(self.responders.items()):
-            human_holding = self.workers.get(game.player_id) == index
-            if not game.get_player(assigned).alive or index in self.completed or human_holding:
-                self.responders.pop(assigned)
-                self.cancel_worker(assigned)
-        taken = set(self.responders.values()) | set(self.workers.values()) | self.completed
-        for index, panel in enumerate(self.panels):
-            if index in taken:
-                continue
-            candidates = [a for a in game.npcs if a.alive and a.role == "crew"
-                          and a.id not in self.responders and a.id not in self.workers]
-            if candidates:
-                actor = min(candidates, key=lambda a: len(game.find_path(a.pos, panel.pos)) or 10000)
-                self.responders[actor.id] = index
-                actor.path, actor.goal, actor.rethink_clock = [], None, 0.0
-        index = self.responders.get(actor_id)
-        return self.panels[index].pos if index is not None else None
 
     def tick(self, game: "Game", dt: float) -> None:
         if not self.kind:

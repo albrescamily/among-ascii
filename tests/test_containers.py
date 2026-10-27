@@ -1,8 +1,8 @@
 """Solid cargo, sight obstruction and relocated Electrical interactions."""
 import unittest
 
-from src import Game, GameConfig
-from src.core.tasks import TASK_NAMES
+from src import GameConfig, new_game
+from src.core.world import TASK_NAMES
 from src.core.world import CONTAINERS, FURNITURE, VENT_POSITIONS
 from src.terminal.palette import BLUE, GRAY, YELLOW
 from src.terminal.text import ANSI_SGR, display_width
@@ -11,7 +11,7 @@ from src.terminal.ui import expand_map_cell, map_cell, observer_map_cell
 
 class ContainerTests(unittest.TestCase):
     def test_containers_block_movement_sight_and_force_paths_around(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game = new_game(config=GameConfig(npc_ai_enabled=False))
         for room, (left, top, right, bottom) in CONTAINERS.items():
             with self.subTest(room=room):
                 x = (left + right) // 2
@@ -29,7 +29,7 @@ class ContainerTests(unittest.TestCase):
                 self.assertFalse(set(path) & FURNITURE)
 
     def test_containers_render_hollow_but_stay_solid_in_both_map_views(self):
-        game = Game()
+        game = new_game()
         game.discovered.update(FURNITURE)
         for pos in FURNITURE:
             self.assertEqual(game.grid[pos[1]][pos[0]], "O")
@@ -64,7 +64,7 @@ class ContainerTests(unittest.TestCase):
         self.assertFalse(any(38 <= x <= 60 and 2 <= y <= 11 for x, y in FURNITURE))
 
     def test_electrical_task_moves_to_yellow_mark_and_can_be_completed(self):
-        game = Game(config=GameConfig(player_count=1, impostor_count=0,
+        game = new_game(config=GameConfig(player_count=1, impostor_count=0,
                                       tasks_per_player=24, npc_ai_enabled=False))
         self.assertEqual(TASK_NAMES[(34, 26)], "Calibrate distributor")
         self.assertNotIn((30, 27), TASK_NAMES)
@@ -74,7 +74,7 @@ class ContainerTests(unittest.TestCase):
         self.assertIn((34, 26), game.completed_tasks)
 
     def test_electrical_vent_moves_to_pink_mark_and_keeps_connections(self):
-        game = Game(config=GameConfig(player_role="impostor", npc_ai_enabled=False))
+        game = new_game(config=GameConfig(player_role="impostor", npc_ai_enabled=False))
         self.assertEqual(VENT_POSITIONS["electrical"], (29, 26))
         self.assertEqual(game.grid[30][30], ".")
         game.player_pos = VENT_POSITIONS["electrical"]

@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from src import COLORS, Game, GameConfig
+from src import COLORS, GameConfig, new_game
 from src.core.events import EventLog
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 class ConfigurationTests(unittest.TestCase):
     def test_twelve_distinct_colors_and_safe_spawns(self):
-        game = Game()
+        game = new_game()
         self.assertEqual(len(game.players), 12)
         self.assertEqual({actor.name for actor in game.players}, {color.name for color in COLORS})
         for attribute in ("id", "symbol", "color", "pos"):
@@ -24,7 +24,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(game.player.name, "Cyan")
 
     def test_role_count_color_and_configuration_roundtrip(self):
-        game = Game(config=GameConfig(player_count=8, player_color="Purple",
+        game = new_game(config=GameConfig(player_count=8, player_color="Purple",
                                       player_role="impostor", impostor_count=3, tasks_per_player=2))
         self.assertEqual(len(game.players), 8)
         self.assertEqual(game.player.name, "Purple")

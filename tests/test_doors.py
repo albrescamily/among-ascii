@@ -2,9 +2,10 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from src import Action, Game, GameConfig
-from src.core.doors import DOOR_KEYS, room_doors
+from src import Action, GameConfig, new_game
+from src.core.systems.doors import room_doors
 from src.core.world import EMERGENCY_POS
+from src.terminal.keymap import DOOR_KEYS
 from src.terminal.runtime import play_one
 from src.terminal.text import ANSI_SGR
 from src.terminal.ui import map_cell, render_minimap
@@ -14,7 +15,7 @@ def make_game(**overrides):
     options = dict(npc_ai_enabled=False, kills_enabled=False, player_role="impostor",
                    task_win_mode="disabled", initial_sabotage_cooldown=0, initial_door_cooldown=0)
     options.update(overrides)
-    return Game(config=GameConfig(**options))
+    return new_game(config=GameConfig(**options))
 
 
 def close(game, room):
@@ -144,7 +145,7 @@ class NpcDoorTests(unittest.TestCase):
         game.tick(0.01)
         self.assertFalse(game.doors.closed)
 
-    def test_npc_partners_never_sabotage_for_a_human_impostor(self):
+    def test_npc_partners_never_sabotage_for_a_player_impostor(self):
         game = make_game(npc_ai_enabled=True, player_role="impostor", impostor_count=2,
                          initial_sabotage_cooldown=0)
         partner = next(actor for actor in game.npcs if actor.role == "impostor")
@@ -153,7 +154,7 @@ class NpcDoorTests(unittest.TestCase):
         game.tick(0.01)
         self.assertIsNone(game.sabotage.kind)
         self.assertFalse(game.doors.closed)
-        # A human impostor still triggers them by hand.
+        # A player impostor still triggers them by hand.
         self.assertTrue(game.apply_action(game.player_id, Action("sabotage", "lights")))
         crew = make_game(npc_ai_enabled=True, player_role="crew", initial_sabotage_cooldown=0)
         crew.tick(0.01)
@@ -173,7 +174,7 @@ class DoorControlsTests(unittest.TestCase):
         term = Mock()
         term.read_keys.side_effect = keys
         term.caps_lock.return_value = False
-        with patch("src.terminal.runtime.Game", return_value=game), patch(
+        with patch("src.terminal.runtime.new_game", return_value=game), patch(
                 "src.terminal.text.shutil.get_terminal_size", return_value=(130, 42)):
             play_one(term)
 

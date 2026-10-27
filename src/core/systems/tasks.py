@@ -2,10 +2,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
-from .models import EPSILON, Pos
-from .world import TASK_NAMES, TASK_POSITIONS
+from ..models import EPSILON, Pos
+from ..world import TASK_NAMES, TASK_POSITIONS
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
 
 @dataclass

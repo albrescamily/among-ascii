@@ -1,13 +1,13 @@
-"""Built-in game NPCs: navigation, tasks, hunting, chat and voting.
+"""Built-in NPC controller: navigation, tasks, hunting, chat and voting.
 
-This module is not used by simulation mode.
+Game mode only: `session.new_game` attaches it; simulation mode runs without it.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from .core.models import EPSILON, Player, Pos
-from .core.world import TASK_POSITIONS, VENT_IDS, room_at
-from .core.sabotage import PANELS
-from .core.doors import DOOR_ROOMS
+from ..core.models import EPSILON, Player, Pos
+from ..core.world import TASK_POSITIONS, VENT_IDS, room_at
+from ..core.systems.sabotage import PANELS
+from ..core.systems.doors import DOOR_ROOMS
 
 ROOM_IDS = {name: room_id for room_id, name in DOOR_ROOMS.items()}
 VOTE_START, VOTE_SPREAD = 0.15, 0.60  # Ballots land between 15% and 75% of the voting phase.
@@ -17,13 +17,19 @@ KEEP_GOAL_CHANCE = 0.55  # A wandering NPC keeps its current goal this often.
 IMPOSTOR_RETHINK_SECONDS = 0.8
 CREW_RETHINK_SECONDS = (1.5, 3.2)  # Random range between route re-plans.
 if TYPE_CHECKING:
-    from .core.engine import Game
+    from ..core.engine import Game
 
 
-class NPCSystem:
+class NPCController:
+    """Decides for every player in `game.npcs`; a `core.controller.Controller`."""
+
     def __init__(self) -> None:
         self.meeting_vote_times: dict[str, float] = {}
         self.greetings: set[tuple[str, int]] = set()
+
+    def meeting_started(self, game: "Game") -> None:
+        self.start_meeting(game)
+        self.greet(game)
 
     def start_meeting(self, game: "Game") -> None:
         """Spread built-in decisions across the meeting, using the episode RNG."""
@@ -54,7 +60,7 @@ class NPCSystem:
         for actor in game.npcs:
             if (actor.alive and actor.id not in game.meetings.votes
                     and game.meetings.elapsed + EPSILON >= self.meeting_vote_times.get(actor.id, game.meetings.duration)):
-                game.meetings.submit(game, actor.id, game.meetings.bot_vote(game, actor.id))
+                game.meetings.submit(game, actor.id, self.vote(game, actor.id))
 
     def vote(self, game: "Game", voter_id: str) -> str | None:
         voter = game.get_player(voter_id)
@@ -66,9 +72,30 @@ class NPCSystem:
         weights = [BASE_VOTE_WEIGHT + voter.suspicion.get(candidate, 0.0) for candidate in options]
         return game.rng.choices(options, weights=weights, k=1)[0]
 
+    def sabotage_goal(self, game: "Game", actor_id: str) -> Pos | None:
+        """Send only the crew a repair needs, each to a different panel."""
+        sabotage = game.sabotage
+        for assigned, index in list(sabotage.responders.items()):
+            player_holding = sabotage.workers.get(game.player_id) == index
+            if not game.get_player(assigned).alive or index in sabotage.completed or player_holding:
+                sabotage.responders.pop(assigned)
+                sabotage.cancel_worker(assigned)
+        taken = set(sabotage.responders.values()) | set(sabotage.workers.values()) | sabotage.completed
+        for index, panel in enumerate(sabotage.panels):
+            if index in taken:
+                continue
+            candidates = [a for a in game.npcs if a.alive and a.role == "crew"
+                          and a.id not in sabotage.responders and a.id not in sabotage.workers]
+            if candidates:
+                actor = min(candidates, key=lambda a: len(game.find_path(a.pos, panel.pos)) or 10000)
+                sabotage.responders[actor.id] = index
+                actor.path, actor.goal, actor.rethink_clock = [], None, 0.0
+        index = sabotage.responders.get(actor_id)
+        return sabotage.panels[index].pos if index is not None else None
+
     def choose_goal(self, game: "Game", actor: Player) -> Pos:
         if actor.role == "crew" and game.sabotage.kind:
-            goal = game.sabotage.npc_goal(game, actor.id)
+            goal = self.sabotage_goal(game, actor.id)
             if goal is not None:
                 return goal
         if actor.role == "impostor" and game.elapsed >= game.config.hunt_delay:
@@ -150,7 +177,7 @@ class NPCSystem:
             if actor.role == "crew" and game.report_body(actor.id, automatic=True):
                 return
             if actor.role == "crew" and game.sabotage.kind:
-                goal = game.sabotage.npc_goal(game, actor.id)
+                goal = self.sabotage_goal(game, actor.id)
                 if goal is not None:
                     game.tasks.cancel(game, actor.id)
                     if game.distance(actor.pos, goal) <= 1:

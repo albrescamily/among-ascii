@@ -2,8 +2,8 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from src import Action, Game, GameConfig
-from src.core.sabotage import PANELS
+from src import Action, GameConfig, new_game
+from src.core.systems.sabotage import PANELS
 from src.core.world import EMERGENCY_POS
 from src.terminal.menu import adjust_setting, MENU_ITEMS, render_setup
 from src.terminal.runtime import play_one
@@ -12,7 +12,7 @@ from src.terminal.ui import render_game, render_help, render_observer
 
 
 def make_game(**overrides):
-    return Game(config=GameConfig(play_mode="game", test_mode=True, player_role="crew", seed=3, **overrides))
+    return new_game(config=GameConfig(play_mode="game", test_mode=True, player_role="crew", seed=3, **overrides))
 
 
 def next_to(game, target):
@@ -110,7 +110,7 @@ class TestMapTerminalTests(unittest.TestCase):
         term = Mock()
         term.read_keys.side_effect = keys
         term.caps_lock.return_value = caps
-        with patch("src.terminal.runtime.Game", return_value=game), patch(
+        with patch("src.terminal.runtime.new_game", return_value=game), patch(
                 "src.terminal.text.shutil.get_terminal_size", return_value=(130, 42)), patch(
                 "src.terminal.runtime.time.monotonic", side_effect=range(100)):
             play_one(term)
@@ -124,7 +124,7 @@ class TestMapTerminalTests(unittest.TestCase):
         self.assertIn("GOD VIEW", self.view_screens([["`"], [], ["q"]], None)[-1])
 
     def test_crew_panel_lists_finished_tasks_in_green(self):
-        from src.core.tasks import TASK_NAMES
+        from src.core.world import TASK_NAMES
         from src.terminal.palette import GREEN
         game = make_game()
         done = game.assigned_tasks[0]
@@ -155,27 +155,27 @@ class TestMapTerminalTests(unittest.TestCase):
         god = MENU_ITEMS.index("allow_god_view")
         config = adjust_setting(config, god, 1)
         self.assertFalse(config.allow_god_view)
-        self.assertFalse(Game(config=config).god_view_allowed)
+        self.assertFalse(new_game(config=config).god_view_allowed)
         config = adjust_setting(config, MENU_ITEMS.index("test_mode"), 1)
         self.assertTrue(config.test_mode)
-        self.assertTrue(Game(config=config).test_mode)
+        self.assertTrue(new_game(config=config).test_mode)
         # The Test mode forces the God view on, and the menu option is locked.
-        self.assertTrue(Game(config=config).god_view_allowed)
+        self.assertTrue(new_game(config=config).god_view_allowed)
         self.assertEqual(adjust_setting(config, god, 1), config)
         self.assertIn("On (test mode)", ANSI_SGR.sub("", render_setup(config, god)))
         # Simulation ignores both; the menu marks them as game-only.
         simulation = adjust_setting(config, mode, 1)
-        self.assertFalse(Game(config=simulation).test_mode)
+        self.assertFalse(new_game(config=simulation).test_mode)
         self.assertEqual(adjust_setting(simulation, MENU_ITEMS.index("test_mode"), 1), simulation)
         with self.assertRaises(ValueError):
             GameConfig(play_mode="test")
 
     def test_god_view_stays_closed_when_not_allowed(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False, allow_god_view=False))
+        game = new_game(config=GameConfig(npc_ai_enabled=False, allow_god_view=False))
         term = Mock()
         term.read_keys.side_effect = [[], ["`"], ["q"]]
         term.caps_lock.return_value = True
-        with patch("src.terminal.runtime.Game", return_value=game), patch(
+        with patch("src.terminal.runtime.new_game", return_value=game), patch(
                 "src.terminal.text.shutil.get_terminal_size", return_value=(130, 42)), patch(
                 "src.terminal.runtime.time.monotonic", side_effect=range(100)):
             play_one(term)
@@ -188,7 +188,7 @@ class TestMapTerminalTests(unittest.TestCase):
         game = make_game()
         term = Mock()
         term.read_keys.side_effect = [["x"], ["n"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=game), patch(
+        with patch("src.terminal.runtime.new_game", return_value=game), patch(
                 "src.terminal.text.shutil.get_terminal_size", return_value=(120, 38)):
             play_one(term)
         self.assertEqual(game.player.role, "impostor")
@@ -199,7 +199,7 @@ class TestMapTerminalTests(unittest.TestCase):
         self.assertIn("BUTTONS 1", plain.splitlines()[1])
         god = ANSI_SGR.sub("", render_observer(game, (120, 38)))
         self.assertIn("MODE TEST / GOD VIEW", god)
-        simulation = ANSI_SGR.sub("", render_observer(Game(config=GameConfig(play_mode="simulation")), (120, 38)))
+        simulation = ANSI_SGR.sub("", render_observer(new_game(config=GameConfig(play_mode="simulation")), (120, 38)))
         self.assertIn("MODE SIMULATION", simulation.splitlines()[0])
         self.assertNotIn("GOD VIEW", simulation.splitlines()[0])
         self.assertNotIn("BUTTONS", simulation.splitlines()[1])

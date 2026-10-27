@@ -43,7 +43,7 @@ class GameConfig:
     allow_god_view: bool = True  # Caps Lock God view in Game mode; forced on by test_mode
     player_count: int = 12
     player_color: str = "Cyan"
-    player_role: str = "random"  # crew, impostor, or random (the human may be an impostor)
+    player_role: str = "random"  # crew, impostor, or random (the player may be an impostor)
     impostor_count: int = 1
     tasks_per_player: int = 5
     task_seconds: float = 1.8

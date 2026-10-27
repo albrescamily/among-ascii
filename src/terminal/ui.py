@@ -4,13 +4,15 @@ import math
 import textwrap
 from dataclasses import dataclass
 from typing import Optional
+from ..controllers.player import acting_impostor
 from ..core.engine import Game
 from ..core.models import EPSILON, Player, Body, Pos
 from .palette import *
 from ..core.world import (CONTAINERS, MAP_W, MAP_H, ROOM_LABELS, DOOR_CELLS, EMERGENCY_POS, TASK_NAMES,
                           manhattan, room_at)
-from ..core.sabotage import TITLES
-from ..core.doors import DOOR_KEYS, DOOR_ROOMS, room_doors
+from ..core.systems.sabotage import TITLES
+from ..core.systems.doors import DOOR_ROOMS, room_doors
+from .keymap import DOOR_KEYS
 from .text import (ANSI_SGR, MIN_COLUMNS, MIN_ROWS, terminal_size, display_width,
                    fit_line, fit_screen, centered_screen)
 
@@ -592,7 +594,7 @@ def minimap_cell(game: Game, pos: Pos, *, zoom: int = 1) -> str:
         glyph = "▣" if game.player.vent_id is not None else "@"
         return BOLD + game.player.color + glyph + RESET
     # Only whoever controls the doors (impostor / spectator) sees which are closed on the map.
-    return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW, door_states=door_actor(game) is not None)
+    return ship_cell(game, pos, zoom, BLUE, floor=" ", task=YELLOW, door_states=acting_impostor(game) is not None)
 
 
 def npc_activity(npc: Player) -> str:
@@ -667,18 +669,11 @@ MINIMAP_LEGEND = ["@ you", "◆ your task  ◇ task", "! sabotage  ◉ emergency
                   "▣ vent", "-- open door  ++ closed door"]
 
 
-def door_actor(game: Game) -> Optional[Player]:
-    """Who closes doors: the local impostor, or a living impostor for the simulation spectator."""
-    if game.config.play_mode == "simulation":
-        return next((actor for actor in game.players if actor.alive and actor.role == "impostor"), None)
-    return game.player if game.player.role == "impostor" and game.player_alive else None
-
-
 def doors_panel(game: Game, width: int) -> list[str]:
     """Door controls on the mini map: number keys lock a room's doors."""
     doors = game.doors
     limit = game.config.max_closed_rooms
-    actor = door_actor(game)
+    actor = acting_impostor(game)
     lines = [panel_heading(f"DOORS {doors.closed_count}/{limit} ROOMS CLOSED", width, RED)]
     if actor is None:
         lines.append(GRAY + " No living impostor." + RESET)
@@ -710,7 +705,7 @@ def render_minimap(game: Game, size: Optional[tuple[int, int]] = None) -> str:
     simulation = game.config.play_mode == "simulation"
     if simulation:
         role = doors_panel(game, width)
-    elif door_actor(game) is not None:
+    elif acting_impostor(game) is not None:
         role = doors_panel(game, width) + impostor_panel(game, width, game.visible_positions())
     else:
         role = crew_panel(game, layout, width)

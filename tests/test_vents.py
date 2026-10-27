@@ -1,9 +1,11 @@
 """Vent rules, information boundaries, controllers, and terminal controls."""
 import unittest
+from itertools import count
 from dataclasses import replace
 from unittest.mock import Mock, patch
 
-from src import Action, Game, GameConfig
+from src import Action, GameConfig, new_game
+from src.session import npc_controller
 from src.core.models import Body
 from src.core.world import EMERGENCY_POS, SPAWNS, VENT_LINKS, VENT_POSITIONS, VENTS
 from src.terminal.runtime import play_one
@@ -15,7 +17,7 @@ class VentTests(unittest.TestCase):
     def setUp(self):
         self.config = GameConfig(player_role="impostor", npc_ai_enabled=False,
                                  tasks_per_player=0, end_on_player_death=False)
-        self.game = Game(config=self.config)
+        self.game = new_game(config=self.config)
         self.actor = self.game.player
         self.actor.pos = VENT_POSITIONS["medbay"]
 
@@ -128,7 +130,7 @@ class VentTests(unittest.TestCase):
 
     def test_meeting_clears_vents_even_when_impostor_is_ejected(self):
         for eject in (False, True):
-            game = Game(config=self.config)
+            game = new_game(config=self.config)
             game.player_pos = VENT_POSITIONS["medbay"]
             self.assertTrue(game.apply_action("cyan", "vent"))
             reporter = game.npcs[0]
@@ -161,10 +163,10 @@ class VentTests(unittest.TestCase):
         vent_path = self.game.world.find_path(self.actor.pos, goal, use_vents=True)
         self.assertLess(len(vent_path), len(plain_path))
         self.assertTrue(all(self.game.distance(a, b) == 1 for a, b in zip(plain_path, plain_path[1:])))
-        with patch.object(self.game.npc_system, "choose_goal", return_value=goal):
+        with patch.object(npc_controller(self.game), "choose_goal", return_value=goal):
             for _ in range(4):
                 self.actor.move_clock = 0
-                self.game.move_npc(self.actor)
+                npc_controller(self.game).move(self.game, self.actor)
         self.assertEqual(self.actor.pos, goal)
         self.assertIsNone(self.actor.vent_id)
         kinds = [event["kind"] for event in self.game.events.snapshot()]
@@ -187,20 +189,21 @@ class VentTests(unittest.TestCase):
         self.actor.move_clock = 0
         terminal = Mock()
         terminal.read_keys.side_effect = [["v"], ["1"], ["v"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=self.game), \
+        with patch("src.terminal.runtime.new_game", return_value=self.game), \
                 patch("src.terminal.runtime.time.sleep"), \
                 patch("src.terminal.runtime.check_terminal_size", return_value=None), \
+                patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.2)), \
                 patch.object(self.game, "tick", side_effect=lambda dt: setattr(self.actor, "move_clock", 0)):
             play_one(terminal)
         self.assertEqual(self.actor.pos, VENT_POSITIONS["security"])
         self.assertIsNone(self.actor.vent_id)
 
     def test_simulation_ignores_vent_keys(self):
-        game = Game(config=replace(self.config, play_mode="simulation"))
+        game = new_game(config=replace(self.config, play_mode="simulation"))
         game.player_pos = VENT_POSITIONS["medbay"]
         terminal = Mock()
         terminal.read_keys.side_effect = [["v", "1", "2"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=game), \
+        with patch("src.terminal.runtime.new_game", return_value=game), \
                 patch("src.terminal.runtime.time.sleep"), \
                 patch("src.terminal.runtime.check_terminal_size", return_value=None), \
                 patch.object(game, "tick"), patch.object(game.vents, "use") as use:

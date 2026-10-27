@@ -4,9 +4,9 @@ import re
 from collections import deque
 from unittest.mock import patch
 
-from src import Game, GameConfig
+from src import GameConfig, new_game
 from src.core.world import EMERGENCY_POS, FURNITURE, MAP_H, MAP_W, ROOMS, SPAWNS, VENTS, room_at
-from src.core.tasks import TASK_POSITIONS
+from src.core.world import TASK_POSITIONS
 from src.terminal.driver import Terminal
 from src.terminal.text import ANSI_SGR, display_width, fit_line
 from src.terminal.runtime import play_one
@@ -16,7 +16,7 @@ from src.terminal.ui import (render_end, render_game, render_help, render_meetin
 
 class GameTests(unittest.TestCase):
     def test_map_and_path_are_connected(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         visited = {game.player_pos}
         queue = deque(visited)
         while queue:
@@ -38,13 +38,13 @@ class GameTests(unittest.TestCase):
                                     for a, b in zip(path, path[1:])))
 
     def test_wall_blocks_player(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         game.player_pos = (9, 7)
         self.assertFalse(game.move_player(-1, 0))
         self.assertEqual(game.player_pos, (9, 7))
 
     def test_skeld_rooms_and_solid_exterior(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         self.assertEqual(len(ROOMS), 14)
         expected = {
             (15, 8): "Upper Engine", (49, 7): "Cafeteria",
@@ -63,7 +63,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.find_path((0, 0), (0, 0)), [])
 
     def test_side_rooms_do_not_leak_into_neighboring_rooms(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         # MedBay/Security and Communications/Shields need a separating wall.
         for room_name in ("MedBay", "Security", "Communications"):
             room = next(room for room in ROOMS if room.name == room_name)
@@ -76,7 +76,7 @@ class GameTests(unittest.TestCase):
                             self.assertIn(room_at(pos), (room_name, "Hallway"))
 
     def test_spawns_and_meeting_reset_stay_in_cafeteria(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         for reset in (False, True):
             if reset:
                 game.player_pos = TASK_POSITIONS[0]
@@ -89,7 +89,7 @@ class GameTests(unittest.TestCase):
                 self.assertEqual(room_at(pos), "Cafeteria")
 
     def test_task_completes_in_real_time(self):
-        game = Game(config=GameConfig(seed=2, player_role="crew"))
+        game = new_game(config=GameConfig(seed=2, player_role="crew"))
         task = game.assigned_tasks[0]
         game.player_pos = task
         game.interact()
@@ -101,29 +101,29 @@ class GameTests(unittest.TestCase):
         self.assertIn(task, game.completed_tasks)
 
     def test_emergency_meeting(self):
-        game = Game(seed=3)
+        game = new_game(seed=3)
         game.player_pos = EMERGENCY_POS
         game.interact()
         self.assertIsNotNone(game.pending_meeting)
         self.assertFalse(game.emergency_available)
 
     def test_impostor_can_create_body(self):
-        game = Game(seed=4)
+        game = new_game(seed=4)
         impostor = game.get_player(game.impostor_id)
         victim = next(n for n in game.npcs if n.role == "crew")
         impostor.pos = (12, 8)
         victim.pos = (12, 7)
         game.kill_cooldown = 0
-        game.try_impostor_kill(impostor)
+        game.kill(impostor.id)
         self.assertFalse(victim.alive)
         self.assertEqual(len(game.bodies), 1)
 
     def test_visibility_is_blocked_by_wall(self):
-        game = Game(seed=5)
+        game = new_game(seed=5)
         self.assertFalse(game.has_line_of_sight((25, 18), (27, 18), radius=10))
 
     def test_observer_screen_exposes_complete_player_state(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         screen = render_observer(game, (MAP_W + 36, MAP_H + 8))
         self.assertIn("FULL MAP", screen)
         self.assertIn("IMPOSTOR", screen)
@@ -134,7 +134,7 @@ class GameTests(unittest.TestCase):
 
 class RenderingTests(unittest.TestCase):
     def test_universal_task_bar_is_visible_with_or_without_panel(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         actor = next(actor for actor in game.npcs if actor.role == "crew")
         game.tasks.states[actor.id].completed.add(game.tasks.states[actor.id].assigned[0])
         for size in ((60, 20), (133, 49), (230, 49)):
@@ -148,7 +148,7 @@ class RenderingTests(unittest.TestCase):
                     self.assertEqual(display_width(row), size[0] - 1)
 
     def test_voting_and_final_screens_remain_centered_after_resize(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         game.outcome = "victory"
         game.outcome_reason = "All required tasks have been completed."
         counts = {actor.id: 1 for actor in game.players}
@@ -171,7 +171,7 @@ class RenderingTests(unittest.TestCase):
                 self.assertIn("play again", screens[2])
 
     def test_vote_results_explain_the_outcome_and_fit(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
+        game = new_game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
         impostor = game.get_player(game.impostor_id)
         impostor.alive = False
         with patch("src.terminal.text.shutil.get_terminal_size", return_value=(80, 24)):
@@ -191,7 +191,7 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("╰", lines[-1])
 
     def test_all_screens_fit_on_resize(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         game.messages.extend(["Long event " * 30] * 4)
         game.outcome_reason = "Long reason " * 30
         for size in ((230, 48), (133, 48), (180, 48), (166, 34), (120, 40), (101, 34), (98, 31),
@@ -217,7 +217,7 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(display_width(fit_line(text, 10, pad=True)), 10)
 
     def test_camera_keeps_player_visible_at_ship_extremes(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         for pos in (SPAWNS[0], TASK_POSITIONS[8], TASK_POSITIONS[13], TASK_POSITIONS[-1]):
             game.player_pos = pos
             for zoom in (1, 2):
@@ -230,7 +230,7 @@ class RenderingTests(unittest.TestCase):
                     self.assertEqual("".join(map_rows).count("@"), 1)
 
     def test_map_frame_uses_available_space_at_both_zoom_levels(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         for size in ((60, 20), (101, 34), (120, 38), (133, 48), (230, 48)):
             for zoom in (None, 1, 2):
                 game.map_zoom = zoom
@@ -247,7 +247,7 @@ class RenderingTests(unittest.TestCase):
                             self.assertTrue(lines[-3].startswith("└") and lines[-3].endswith("┘"))
 
     def test_large_monitor_shows_full_map_with_larger_tiles(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         screen = ANSI_SGR.sub("", render_observer(game, (MAP_W * 2 + 36, MAP_H + 8)))
         self.assertIn("2X FULL MAP", screen)
         self.assertIn("R E A C T O R", screen)
@@ -261,17 +261,17 @@ class RenderingTests(unittest.TestCase):
         self.assertNotIn("CREW MANIFEST", render_observer(game, size))
 
     def test_zoom_and_panel_keys_change_the_live_game(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         terminal = unittest.mock.Mock()
         terminal.read_keys.side_effect = [["z"], ["p"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=game), patch("src.terminal.text.shutil.get_terminal_size", return_value=(120, 38)):
+        with patch("src.terminal.runtime.new_game", return_value=game), patch("src.terminal.text.shutil.get_terminal_size", return_value=(120, 38)):
             result = play_one(terminal)
         self.assertIs(result, game)
         self.assertEqual(game.map_zoom, 1)
         self.assertFalse(game.panel_visible)
 
     def test_help_is_one_screen_and_observer_keeps_every_player(self):
-        game = Game(seed=6)
+        game = new_game(seed=6)
         with patch("src.terminal.text.shutil.get_terminal_size", return_value=(60, 20)):
             help_screen = ANSI_SGR.sub("", render_help(game))
             self.assertIn("HOW TO PLAY", help_screen)

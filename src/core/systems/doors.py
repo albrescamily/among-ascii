@@ -2,18 +2,17 @@
 from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional
-from .models import EPSILON
-from .world import DOORS, Door
+from ..models import EPSILON
+from ..world import DOORS, Door
 
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
-# The Skeld's lockable rooms, in the order the mini map numbers them (keys 1-7).
+# The Skeld's lockable rooms, in the order the mini map numbers them.
 DOOR_ROOMS = {
     "cafeteria": "Cafeteria", "storage": "Storage", "electrical": "Electrical", "medbay": "MedBay",
     "security": "Security", "upper_engine": "Upper Engine", "lower_engine": "Lower Engine",
 }
-DOOR_KEYS = {str(index): room_id for index, room_id in enumerate(DOOR_ROOMS, start=1)}
 OPEN, CLOSED = "D", "C"  # Grid codes: closed doorways block movement and sight.
 
 

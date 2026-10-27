@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
-from .models import EPSILON
+from ..models import EPSILON
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
 
 @dataclass(frozen=True)

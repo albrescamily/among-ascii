@@ -1,11 +1,11 @@
 """Impostor vent traversal and visibility of entry/exit events."""
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from .models import EPSILON, WITNESS_SUSPICION
-from .world import VENT_LINKS, VENT_POSITIONS, manhattan, room_at
+from ..models import EPSILON, WITNESS_SUSPICION
+from ..world import VENT_LINKS, VENT_POSITIONS, manhattan, room_at
 
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
 
 class VentSystem:

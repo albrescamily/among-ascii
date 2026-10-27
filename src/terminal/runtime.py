@@ -2,51 +2,42 @@ from __future__ import annotations
 import sys
 import time
 from typing import Optional
+from ..controllers.player import PlayerController
 from ..core.config import GameConfig
-from ..core.engine import Game
+from ..core.engine import TICK_STEP, Game
+from ..core.models import EPSILON, MOVE_ACTIONS
+from ..session import new_game
 from ..core.world import MAP_H, MAP_W
-from ..core.sabotage import SABOTAGE_KEYS
-from ..core.doors import DOOR_KEYS
 from .driver import Terminal
+from .keymap import DOOR_KEYS, MOVE_KEYS, SABOTAGE_KEYS
 from .menu import configure_game
 from .chat import ChatView, render_chat
 from .text import MIN_COLUMNS, MIN_ROWS, terminal_size, fit_screen
 from .palette import RED, RESET
-from .ui import (door_actor, render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
+from .ui import (render_game, render_observer, render_minimap, render_help, render_end, render_meeting,
                  render_vote_result, screen_layout, camera_origin, VOTE_KEYS, sabotage_alert)
 
-MOVE_KEYS = {
-    "w": (0, -1), "up": (0, -1),
-    "s": (0, 1), "down": (0, 1),
-    "a": (-1, 0), "left": (-1, 0),
-    "d": (1, 0), "right": (1, 0),
-}
+
+MAX_FRAME_SECONDS = 0.15  # A stalled frame simulates at most this much; the rest is dropped.
 
 
-def trigger_doors(game: Game, key: str) -> bool:
-    """Close a room from the mini map, as the local impostor or (simulation) a living one."""
-    actor = door_actor(game)
-    if actor is None:
-        game.message("Doors unavailable: no living impostor.")
-        return False
-    reason = game.doors.refusal(game, actor.id, DOOR_KEYS[key])
-    if reason:
-        game.message(reason)
-        return False
-    return game.apply_action(actor.id, {"kind": "doors", "target": DOOR_KEYS[key]})
+def advance(game: Game, pending: float, dt: float) -> float:
+    """Simulate whole TICK_STEP steps for the real time that passed and return what is left.
+
+    Steps never depend on the frame rate, so the same seed and input replay the same match.
+    Stops early when a meeting opens or closes, so the caller can switch screens."""
+    pending += dt
+    in_meeting = game.pending_meeting is not None
+    while (pending + EPSILON >= TICK_STEP and not game.outcome
+           and (game.pending_meeting is not None) == in_meeting):
+        game.tick(TICK_STEP)
+        pending -= TICK_STEP
+    return pending
 
 
 def trigger_sabotage(game: Game, key: str) -> bool:
-    """The simulation spectator acts on behalf of a living impostor."""
-    actor = (next((a for a in game.players if a.alive and a.role == "impostor"), None)
-             if game.config.play_mode == "simulation" else game.player)
-    if actor is None:
-        game.message("Sabotage unavailable: no living impostor.")
-        return False
-    if game.apply_action(actor.id, {"kind": "sabotage", "target": SABOTAGE_KEYS[key]}):
-        return True
-    game.message("Sabotage requires a living impostor, no active emergency and a ready cooldown.")
-    return False
+    """Sabotage hotkey, for the local impostor or the simulation spectator."""
+    return PlayerController().sabotage(game, SABOTAGE_KEYS[key])
 
 
 def pan_camera(game: Game, dx: int, dy: int) -> None:
@@ -74,10 +65,11 @@ def conduct_meeting(term: Terminal, game: Game) -> None:
     prompt = ""
     meeting_chat = ChatView()
     chat_view = None
+    pending = 0.0
     last = time.monotonic()
     while game.pending_meeting and not game.outcome:
         now = time.monotonic()
-        game.tick(min(60.0, max(0.0, now - last)))
+        pending = advance(game, pending, min(60.0, max(0.0, now - last)))
         last = now
         if not game.pending_meeting:
             break
@@ -131,12 +123,14 @@ def check_terminal_size() -> Optional[str]:
 
 
 def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameConfig] = None) -> Game:
-    game = Game(seed=seed, config=config)
+    game = new_game(seed=seed, config=config)
+    player = PlayerController()
     help_open = False
     simulation = game.config.play_mode == "simulation"
     god_open = False      # Caps Lock on Windows; the ` key elsewhere.
     minimap_open = False  # Tab
     chat_view = None
+    pending = 0.0  # Real time not simulated yet.
     last = time.monotonic()
     next_frame = last
     size_warning = check_terminal_size()
@@ -168,32 +162,32 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
                 continue
             if key in MOVE_KEYS:
                 if simulation:
-                    pan_camera(game, *MOVE_KEYS[key])
+                    pan_camera(game, *MOVE_ACTIONS[MOVE_KEYS[key]])
                 else:
-                    game.move_player(*MOVE_KEYS[key])
+                    player.act(game, MOVE_KEYS[key])
             elif key == "e":
-                game.interact()
+                player.act(game, "interact")
             elif key == "r":
-                game.report()
+                player.act(game, "report")
             elif key == "k":
-                game.kill(game.player_id)
+                player.act(game, "kill")
             elif game.test_mode and key == "x":
                 game.set_role(game.player_id, "crew" if game.player.role == "impostor" else "impostor")
             elif game.test_mode and key == "n":
                 game.reset_test()
             elif key in SABOTAGE_KEYS:
-                trigger_sabotage(game, key)
+                player.sabotage(game, SABOTAGE_KEYS[key])
             elif key == "v":
-                if not game.apply_action(game.player_id, "vent"):
+                if not player.act(game, "vent"):
                     game.message("Vent unavailable: approach a vent; exits must be clear.")
             elif (minimap_open and key in DOOR_KEYS and game.player.vent_id is None
                   and (simulation or game.player.role == "impostor")):
-                trigger_doors(game, key)
+                player.close_doors(game, DOOR_KEYS[key])
             elif key in ("1", "2") and game.player.vent_id is not None:
                 connections = game.vents.observe(game, game.player_id)["connections"]
                 index = int(key) - 1
                 if index < len(connections):
-                    game.apply_action(game.player_id, {"kind": "vent", "target": connections[index]["id"]})
+                    player.act(game, {"kind": "vent", "target": connections[index]["id"]})
             elif key in ("[", "]"):
                 game.observer_page += 1 if key == "]" else -1
             elif key == "z":
@@ -216,10 +210,12 @@ def play_one(term: Terminal, seed: Optional[int] = None, config: Optional[GameCo
             elif key in ("q", "escape"):
                 stop_game(game)
 
-        game.tick(min(dt, 0.15))
+        pending = advance(game, pending, min(dt, MAX_FRAME_SECONDS))
+        player.update(game)
         if game.pending_meeting and not game.outcome:
             chat_view = None
             conduct_meeting(term, game)
+            pending = 0.0
             last = time.monotonic()
             next_frame = last
             continue

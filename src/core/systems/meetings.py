@@ -2,9 +2,9 @@
 from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Optional
-from .models import EPSILON, Body
+from ..models import EPSILON, Body
 if TYPE_CHECKING:
-    from .engine import Game
+    from ..engine import Game
 
 
 class MeetingSystem:
@@ -55,8 +55,6 @@ class MeetingSystem:
         self.duration = self.discussion + game.config.voting_seconds
         self.votes.clear()
         self.last_result = None
-        if game.npc_system is not None:
-            game.npc_system.start_meeting(game)
         for actor in game.players:
             game.tasks.cancel(game, actor.id)
             actor.vent_id = None
@@ -65,8 +63,8 @@ class MeetingSystem:
                         "room": body.room if body else "Cafeteria",
                         "discussion_seconds": self.discussion,
                         "voting_seconds": self.duration - self.discussion})
-        if game.npc_system is not None:
-            game.npc_system.greet(game)
+        for controller in game.controllers:
+            controller.meeting_started(game)
         return True
 
     def submit(self, game: "Game", voter_id: str, target: Optional[str]) -> bool:
@@ -80,18 +78,12 @@ class MeetingSystem:
         if not self.pending or game.outcome:
             return
         self.elapsed = min(self.duration, self.elapsed + dt)
-        if game.npc_system is not None:
-            game.npc_system.meeting_tick(game)
+        for controller in game.controllers:
+            controller.meeting_tick(game)
         if self.remaining <= EPSILON or set(game.alive_ids()) <= self.votes.keys():
             # Missing ballots are skips, including players that time out.
             ballots = {actor: self.votes.get(actor) for actor in game.alive_ids()}
             self.resolve(game, ballots)
-
-    def bot_vote(self, game: "Game", voter_id: str) -> Optional[str]:
-        if (game.npc_system is None or not game.config.npc_ai_enabled
-                or voter_id not in {actor.id for actor in game.npcs}):
-            return None
-        return game.npc_system.vote(game, voter_id)
 
     def resolve(self, game: "Game", votes: dict[str, Optional[str]]) -> tuple[Optional[str], dict]:
         if not self.pending:
@@ -100,7 +92,7 @@ class MeetingSystem:
         if any(voter not in alive or (target is not None and target not in alive)
                for voter, target in votes.items()):
             raise ValueError("Votes must name living voters and living targets (or null to skip)")
-        ballots = {actor: votes[actor] if actor in votes else self.bot_vote(game, actor) for actor in alive}
+        ballots = {actor: votes.get(actor) for actor in alive}  # A missing ballot is a skip.
         counts = Counter(ballots.values())
         ranked = [(target, count) for target, count in counts.items() if target is not None]
         high = max((count for _, count in ranked), default=0)

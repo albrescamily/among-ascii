@@ -2,10 +2,11 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from src import Action, Game, GameConfig
+from src import Action, GameConfig, new_game
 from src.core.models import Body
-from src.core.sabotage import CRITICAL, PANELS, SABOTAGE_KEYS
+from src.core.systems.sabotage import CRITICAL, PANELS
 from src.core.world import EMERGENCY_POS, ROOM_LABELS
+from src.terminal.keymap import SABOTAGE_KEYS
 from src.terminal.palette import BLUE, RED, YELLOW
 from src.terminal.runtime import play_one, trigger_sabotage
 from src.terminal.text import ANSI_SGR, display_width
@@ -16,7 +17,7 @@ def make_game(mode="game", **overrides):
     options = dict(play_mode=mode, npc_ai_enabled=False, kills_enabled=False, player_role="crew",
                    task_win_mode="disabled", initial_sabotage_cooldown=0)
     options.update(overrides)
-    return Game(config=GameConfig(**options))
+    return new_game(config=GameConfig(**options))
 
 
 def start(game, kind):
@@ -135,7 +136,7 @@ class SabotageTests(unittest.TestCase):
         positions = [a.pos for a in game.players]
         game.tick(30)
         self.assertIsNone(game.sabotage.kind)
-        self.assertIsNone(game.npc_system)
+        self.assertEqual(game.controllers, [])
         self.assertTrue(trigger_sabotage(game, "f"))
         game.tick(3)
         self.assertEqual(positions, [a.pos for a in game.players])
@@ -217,7 +218,7 @@ class SabotageTerminalTests(unittest.TestCase):
                 game = make_game(mode, player_role="impostor" if mode == "game" else "crew")
                 term = Mock()
                 term.read_keys.side_effect = [[key], ["q"]]
-                with patch("src.terminal.runtime.Game", return_value=game), patch(
+                with patch("src.terminal.runtime.new_game", return_value=game), patch(
                         "src.terminal.text.shutil.get_terminal_size", return_value=(120, 38)):
                     play_one(term)
                 self.assertEqual(game.sabotage.kind, kind)

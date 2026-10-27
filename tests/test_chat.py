@@ -4,7 +4,8 @@ from itertools import count
 import unittest
 from unittest.mock import Mock, patch
 
-from src import Action, Game, GameConfig
+from src import Action, GameConfig, new_game
+from src.session import npc_controller
 from src.core.models import Body
 from src.terminal.chat import ChatView, render_chat
 from src.terminal.driver import Terminal
@@ -15,7 +16,7 @@ from src.terminal.ui import render_meeting
 
 class ChatTests(unittest.TestCase):
     def test_broadcast_reaches_distant_and_dead_players_without_mutable_aliases(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game = new_game(config=GameConfig(npc_ai_enabled=False))
         game.get_player('red').pos = (0, 0)
         game.get_player('blue').alive = False
         game.meetings.call(game, 'cyan')
@@ -29,7 +30,7 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(game.chat.snapshot()[-1]['text'], 'Hello world')
 
     def test_dead_and_ejected_players_cannot_send_in_game_or_meetings(self):
-        game = Game(config=GameConfig(end_on_player_death=False, initial_kill_cooldown=0))
+        game = new_game(config=GameConfig(end_on_player_death=False, initial_kill_cooldown=0))
         attacker = game.get_player(game.impostor_id)
         victim = next(actor for actor in game.npcs if actor.role == "crew")
         attacker.pos, victim.pos = (12, 7), (12, 8)
@@ -42,7 +43,7 @@ class ChatTests(unittest.TestCase):
         self.assertFalse(game.apply_action(ejected, Action("chat", message="ejected")))
 
     def test_safe_bounded_history_and_message_validation(self):
-        game = Game(config=GameConfig(chat_history=2, chat_max_length=20, npc_ai_enabled=False))
+        game = new_game(config=GameConfig(chat_history=2, chat_max_length=20, npc_ai_enabled=False))
         game.meetings.call(game, "cyan")
         for message in ("old", "Hello\nworld", "\x1b[2J text"):
             self.assertTrue(game.chat.send(game, "cyan", message))
@@ -59,14 +60,14 @@ class ChatTests(unittest.TestCase):
                 Action.parse(action)
 
     def test_builtin_bots_only_greet_once_per_voting_session(self):
-        game = Game(config=GameConfig(kills_enabled=False, seed=7, player_role="crew"))
+        game = new_game(config=GameConfig(kills_enabled=False, seed=7, player_role="crew"))
         game.tick(0.1)
         self.assertEqual(len(game.chat.messages), 0)
-        game.npc_system.greet(game)
+        npc_controller(game).greet(game)
         self.assertEqual(len(game.chat.messages), 0)
         game.get_player("red").alive = False
         game.meetings.call(game, "cyan")
-        game.npc_system.greet(game)
+        npc_controller(game).greet(game)
         game.tick(0.2)
         self.assertEqual(len(game.chat.messages), 10)
         self.assertTrue(all(message.text == "Hello world" for message in game.chat.messages))
@@ -78,7 +79,7 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(len(game.chat.messages), 20)
 
     def test_chat_permissions_follow_voting_and_preserve_history(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False, voting_seconds=1, discussion_seconds=0))
+        game = new_game(config=GameConfig(npc_ai_enabled=False, voting_seconds=1, discussion_seconds=0))
         action = Action("chat", message="Meeting message")
         before = game.events.sequence
         for actor in game.players:
@@ -109,10 +110,10 @@ class ChatTests(unittest.TestCase):
         self.assertFalse(ChatView.can_send(game))
 
     def test_new_game_clears_chat_and_preserves_determinism(self):
-        game = Game()
+        game = new_game()
         game.meetings.call(game, "cyan")
         before = game.chat.snapshot()
-        game = Game()
+        game = new_game()
         self.assertEqual(game.chat.snapshot(), [])
         game.meetings.call(game, "cyan")
         self.assertEqual(game.chat.snapshot(), before)
@@ -120,7 +121,7 @@ class ChatTests(unittest.TestCase):
 
 class VotingTimerTests(unittest.TestCase):
     def test_builtin_votes_change_status_during_meeting_and_match_results(self):
-        game = Game(config=GameConfig(voting_seconds=30, seed=7, discussion_seconds=0))
+        game = new_game(config=GameConfig(voting_seconds=30, seed=7, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         self.assertEqual(game.meetings.votes, {})
         positions = [actor.pos for actor in game.players]
@@ -154,7 +155,7 @@ class VotingTimerTests(unittest.TestCase):
         self.assertEqual(result["data"]["votes"], submitted)
 
     def test_builtin_vote_timing_is_seeded_and_resets_each_meeting(self):
-        game = Game(config=GameConfig(voting_seconds=30, seed=7))
+        game = new_game(config=GameConfig(voting_seconds=30, seed=7))
 
         def run_meeting():
             game.meetings.call(game, "cyan")
@@ -165,18 +166,18 @@ class VotingTimerTests(unittest.TestCase):
             return history
 
         first = run_meeting()
-        game = Game(config=GameConfig(voting_seconds=30, seed=7))
+        game = new_game(config=GameConfig(voting_seconds=30, seed=7))
         self.assertEqual(first, run_meeting())
-        old_schedule = dict(game.npc_system.meeting_vote_times)
+        old_schedule = dict(npc_controller(game).meeting_vote_times)
         game.meetings.resolve(game, dict.fromkeys(game.alive_ids(), None))
         game.meetings.call(game, "cyan")
         self.assertEqual(game.meetings.votes, {})
-        self.assertNotEqual(old_schedule, game.npc_system.meeting_vote_times)
+        self.assertNotEqual(old_schedule, npc_controller(game).meeting_vote_times)
         game.tick(0.1)
         self.assertEqual(game.meetings.votes, {})
 
     def test_timeout_skips_missing_votes_and_freezes_world_clocks(self):
-        game = Game(config=GameConfig(voting_seconds=0.3, npc_ai_enabled=False, discussion_seconds=0))
+        game = new_game(config=GameConfig(voting_seconds=0.3, npc_ai_enabled=False, discussion_seconds=0))
         game.meetings.call(game, 'cyan')
         positions = [actor.pos for actor in game.players]
         cooldown = game.kill_cooldown
@@ -204,7 +205,7 @@ class VotingTimerTests(unittest.TestCase):
 
 class DiscussionPhaseTests(unittest.TestCase):
     def test_ballots_open_only_after_the_discussion(self):
-        game = Game(config=GameConfig(discussion_seconds=10, voting_seconds=20, seed=7, player_role="crew"))
+        game = new_game(config=GameConfig(discussion_seconds=10, voting_seconds=20, seed=7, player_role="crew"))
         game.meetings.call(game, "cyan")
         self.assertEqual(game.meetings.phase, "discussion")
         self.assertEqual(game.meetings.remaining, 30)
@@ -225,12 +226,12 @@ class DiscussionPhaseTests(unittest.TestCase):
         self.assertEqual(game.meetings.last_result[1].get("red", 0) >= 1, True)
 
     def test_vote_keys_during_discussion_explain_the_wait(self):
-        game = Game(config=GameConfig(discussion_seconds=10, voting_seconds=1, vote_result_seconds=0.1))
+        game = new_game(config=GameConfig(discussion_seconds=10, voting_seconds=1, vote_result_seconds=0.1))
         game.meetings.call(game, "cyan")
         keys = iter([["2"]])  # "2" is Red's ballot key, pressed while still talking
         term = Mock()
         term.read_keys.side_effect = lambda: next(keys, [])
-        with patch.object(game.meetings, "bot_vote", return_value=None), \
+        with patch.object(npc_controller(game), "vote", return_value=None), \
                 patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.5)), \
                 patch("src.terminal.runtime.time.sleep"):
             conduct_meeting(term, game)
@@ -242,12 +243,12 @@ class DiscussionPhaseTests(unittest.TestCase):
 
 class MeetingStateTextTests(unittest.TestCase):
     def test_discussion_notice_does_not_survive_into_voting(self):
-        game = Game(config=GameConfig(discussion_seconds=1, voting_seconds=30, vote_result_seconds=0.1))
+        game = new_game(config=GameConfig(discussion_seconds=1, voting_seconds=30, vote_result_seconds=0.1))
         game.meetings.call(game, "red")
         keys = iter([["2"]])  # pressed while still talking
         term = Mock()
         term.read_keys.side_effect = lambda: next(keys, [])
-        with patch.object(game.meetings, "bot_vote", return_value=None), \
+        with patch.object(npc_controller(game), "vote", return_value=None), \
                 patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.5)), \
                 patch("src.terminal.runtime.time.sleep"):
             conduct_meeting(term, game)
@@ -258,7 +259,7 @@ class MeetingStateTextTests(unittest.TestCase):
 
     def test_ghosts_and_spectators_are_not_told_to_vote(self):
         for config in (GameConfig(discussion_seconds=0), GameConfig(play_mode="simulation", discussion_seconds=0)):
-            game = Game(config=config)
+            game = new_game(config=config)
             if config.play_mode == "game":
                 game.player.alive = False
             game.meetings.call(game, game.alive_ids()[0])
@@ -272,7 +273,7 @@ class MeetingStateTextTests(unittest.TestCase):
         for mode, role, expected in (("game", "impostor", "You were the impostor."),
                                      ("game", "crew", "You were not the impostor."),
                                      ("simulation", "impostor", "They were the impostor.")):
-            game = Game(config=GameConfig(play_mode=mode, player_role=role, npc_ai_enabled=False,
+            game = new_game(config=GameConfig(play_mode=mode, player_role=role, npc_ai_enabled=False,
                                           discussion_seconds=0))
             game.meetings.call(game, "red")
             ejected, counts = game.meetings.resolve(game, {actor: "cyan" for actor in game.alive_ids()})
@@ -283,7 +284,7 @@ class MeetingStateTextTests(unittest.TestCase):
 
 class ChatLayoutTests(unittest.TestCase):
     def test_own_messages_sit_right_and_others_left_without_live_label(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
+        game = new_game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
         game.meetings.call(game, "red")
         game.chat.send(game, "red", "I saw Green vent")
         game.chat.send(game, "cyan", "its orange")
@@ -299,7 +300,7 @@ class ChatLayoutTests(unittest.TestCase):
 
 class ChatTerminalTests(unittest.TestCase):
     def test_composer_preserves_case_backspace_and_blocks_commands(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game = new_game(config=GameConfig(npc_ai_enabled=False))
         game.meetings.call(game, "cyan")
         view = ChatView()
         for key in [*"Hello worldq", "\x08", "\r"]:
@@ -315,7 +316,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertEqual(len(game.chat.messages), 1)
 
     def test_simulation_chat_is_read_only(self):
-        game = Game(config=GameConfig(play_mode="simulation"))
+        game = new_game(config=GameConfig(play_mode="simulation"))
         game.meetings.call(game, "cyan")
         view = ChatView()
         for key in [*"blocked", "\r"]:
@@ -324,7 +325,7 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertIn("Read only", render_chat(game, view))
 
     def test_chat_and_meeting_screens_fit_without_hiding_controls(self):
-        game = Game(config=GameConfig(discussion_seconds=0))
+        game = new_game(config=GameConfig(discussion_seconds=0))
         body = Body("red", "Red", (1, 1), "Navigation", 0, ["blue", "green"])
         game.meetings.call(game, "cyan", body)
         initial = render_meeting(game, "cyan", body, size=(60, 20))
@@ -365,12 +366,13 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertIn("Red: Hello world", ANSI_SGR.sub("", render_chat(game, view, (60, 20))))
 
     def test_live_game_chat_is_read_only_and_keeps_ticking(self):
-        game = Game(config=GameConfig(npc_ai_enabled=False))
+        game = new_game(config=GameConfig(npc_ai_enabled=False))
         term = Mock()
         term.read_keys.side_effect = [["t", *"QWERTY", "\r"], ["escape"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=game), \
+        with patch("src.terminal.runtime.new_game", return_value=game), \
                 patch.object(game, "move_player") as move, patch.object(game, "interact") as interact, \
                 patch.object(game, "tick", wraps=game.tick) as tick, \
+                patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.1)), \
                 patch("src.terminal.runtime.time.sleep"):
             play_one(term)
         move.assert_not_called()
@@ -381,11 +383,11 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertGreaterEqual(tick.call_count, 2)
 
     def test_meeting_chat_does_not_pause_deadline_or_treat_text_as_votes(self):
-        game = Game(config=GameConfig(voting_seconds=1, vote_result_seconds=3, discussion_seconds=0))
+        game = new_game(config=GameConfig(voting_seconds=1, vote_result_seconds=3, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         term = Mock()
         term.read_keys.side_effect = [["t", *"Q123Hello", "\r"], []]
-        with patch.object(game.meetings, "bot_vote", return_value=None), \
+        with patch.object(npc_controller(game), "vote", return_value=None), \
                 patch("src.terminal.runtime.time.monotonic", side_effect=[0, 0.1, 1, 1, 1.1, 5]), \
                 patch("src.terminal.runtime.time.sleep"):
             conduct_meeting(term, game)
@@ -395,13 +397,13 @@ class ChatTerminalTests(unittest.TestCase):
         self.assertEqual(game.elapsed, 0)
 
     def test_switching_between_voting_and_chat_preserves_draft_and_vote(self):
-        game = Game(config=GameConfig(voting_seconds=2, discussion_seconds=0))
+        game = new_game(config=GameConfig(voting_seconds=2, discussion_seconds=0))
         game.meetings.call(game, "cyan")
         term = Mock()
         keys = iter([["t", *"Q123Hello"], ["\t"], ["\t"], ["\r", "\t"],
                      ["0"], ["t"], ["\t"]])
         term.read_keys.side_effect = lambda: next(keys, [])
-        with patch.object(game.meetings, "bot_vote", return_value=None), \
+        with patch.object(npc_controller(game), "vote", return_value=None), \
                 patch("src.terminal.runtime.time.monotonic", side_effect=count(0, 0.1)), \
                 patch("src.terminal.runtime.time.sleep"):
             conduct_meeting(term, game)

@@ -3,16 +3,17 @@
 import unittest
 from collections import deque
 
-from src import Game
+from src import new_game
+from src.session import npc_controller
 from src.core.world import DOORS, DOOR_CELLS, EMERGENCY_POS, FURNITURE, MAP_H, MAP_W, ROOMS, ROOM_LABELS, VENTS
-from src.core.tasks import TASK_POSITIONS
+from src.core.world import TASK_POSITIONS
 from src.terminal.text import ANSI_SGR, display_width
 from src.terminal.ui import map_cell, observer_map_cell
 
 
 class MapGeometryTests(unittest.TestCase):
     def test_doorways_fill_the_passage_between_wall_jambs(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         rooms = {room.name: room for room in ROOMS}
         actual_doors = {(x, y) for y in range(MAP_H) for x in range(MAP_W)
                         if game.grid[y][x] == "D"}
@@ -40,7 +41,7 @@ class MapGeometryTests(unittest.TestCase):
                                          for pos in sides), 1)
 
     def test_sealed_thresholds_leave_no_side_room_or_corridor_bypass(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         for x, y in DOOR_CELLS:
             game.grid[y][x] = "#"
 
@@ -61,7 +62,7 @@ class MapGeometryTests(unittest.TestCase):
                                  f"{room.name} leaks through a wall or has disconnected floor")
 
     def test_reactor_and_navigation_have_one_central_entrance(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         for room_name in ("Reactor", "Navigation"):
             with self.subTest(room=room_name):
                 entrances = [door for door in DOORS if door.room == room_name]
@@ -95,7 +96,7 @@ class MapGeometryTests(unittest.TestCase):
             for x, y in door.cells:
                 for direction in (-1, 1):
                     with self.subTest(room=door.room, cell=(x, y), direction=direction):
-                        game = Game(seed=1)
+                        game = new_game(seed=1)
                         for npc in game.npcs:
                             npc.alive = False
                         dx, dy = across[0] * direction, across[1] * direction
@@ -112,13 +113,13 @@ class MapGeometryTests(unittest.TestCase):
                         npc.pos, npc.goal = start, end
                         npc.path = game.find_path(start, end)
                         npc.rethink_clock = 10.0
-                        game.move_npc(npc)
+                        npc_controller(game).move(game, npc)
                         self.assertEqual(npc.pos, (x, y))
-                        game.move_npc(npc)
+                        npc_controller(game).move(game, npc)
                         self.assertEqual(npc.pos, end)
 
     def test_room_labels_do_not_cover_tasks_vents_furniture_or_doors(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         reserved = set(TASK_POSITIONS) | VENTS | FURNITURE | {EMERGENCY_POS} | set(DOOR_CELLS)
         self.assertFalse(set(ROOM_LABELS) & reserved)
         for pos in ROOM_LABELS:
@@ -127,7 +128,7 @@ class MapGeometryTests(unittest.TestCase):
                 self.assertTrue(any(room.contains(pos) for room in ROOMS))
 
     def test_expanded_map_keeps_all_landmarks_inside_distinct_rooms(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         self.assertEqual((MAP_W, MAP_H), (97, 41))
         self.assertEqual((len(game.grid[0]), len(game.grid)), (MAP_W, MAP_H))
         floor_count = sum(game.is_walkable((x, y)) for y in range(MAP_H) for x in range(MAP_W))
@@ -141,7 +142,7 @@ class MapGeometryTests(unittest.TestCase):
         self.assertFalse(set(ROOM_LABELS) & {actor.pos for actor in game.players})
 
     def test_door_direction_stays_visible_in_live_observer_and_explored_views(self):
-        game = Game(seed=1)
+        game = new_game(seed=1)
         game.discovered.update(DOOR_CELLS)
         self.assertEqual({door.axis for door in DOORS}, {"horizontal", "vertical"})
         for pos, door in DOOR_CELLS.items():

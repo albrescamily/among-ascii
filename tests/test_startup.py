@@ -2,7 +2,8 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from src import Game, GameConfig
+from src import GameConfig, new_game
+from src.session import npc_controller
 from src.core.world import EMERGENCY_POS
 from src.terminal.menu import MENU_ITEMS, adjust_setting, configure_game, normalize_settings, render_setup
 from src.terminal.runtime import conduct_meeting, play_one, run
@@ -25,7 +26,7 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(settings.initial_kill_cooldown, 12)
         self.assertEqual(settings.post_meeting_kill_cooldown, 12)
         self.assertEqual(settings.voting_seconds, 35)
-        game = Game(config=settings)
+        game = new_game(config=settings)
         self.assertTrue(all(actor.kill_clock == 12 for actor in game.players))
         self.assertEqual(len(game.players), 11)
         self.assertEqual(sum(len(state.assigned) for state in game.tasks.states.values()), 40)
@@ -53,7 +54,7 @@ class StartupTests(unittest.TestCase):
             self.assertGreaterEqual(config.player_count, 4)
             self.assertLess(config.impostor_count * 2, config.player_count)
         self.assertEqual((config.player_count, config.impostor_count), (4, 1))
-        game = Game(config=config)
+        game = new_game(config=config)
         self.assertEqual(len(game.players), 4)
         self.assertEqual(game.player.role, "impostor")
 
@@ -101,7 +102,7 @@ class StartupTests(unittest.TestCase):
                 patch("src.terminal.runtime.sys.stdout.isatty", return_value=True), \
                 patch("src.terminal.runtime.Terminal") as driver, \
                 patch("src.terminal.runtime.configure_game", side_effect=[settings, None]) as setup, \
-                patch("src.terminal.runtime.play_one", return_value=Game(config=settings)) as play:
+                patch("src.terminal.runtime.play_one", return_value=new_game(config=settings)) as play:
             driver.return_value.__enter__.return_value = terminal
             self.assertEqual(run(), 0)
         play.assert_called_once_with(terminal, seed=None, config=settings)
@@ -110,9 +111,9 @@ class StartupTests(unittest.TestCase):
 
 class SimulationModeTests(unittest.TestCase):
     def test_game_npcs_keep_moving_and_completing_tasks(self):
-        game = Game(config=GameConfig(impostor_count=0, task_seconds=0.1))
+        game = new_game(config=GameConfig(impostor_count=0, task_seconds=0.1))
         self.assertEqual(game.npcs, game.players[1:])
-        self.assertIsNotNone(game.npc_system)
+        self.assertIsNotNone(npc_controller(game))
         local_position = game.player_pos
         positions = [actor.pos for actor in game.npcs]
         worker = game.npcs[0]
@@ -128,7 +129,7 @@ class SimulationModeTests(unittest.TestCase):
     def test_simulation_renders_every_inactive_player(self):
         from src.terminal.ui import observer_map_cell, render_observer
 
-        game = Game(config=GameConfig(play_mode="simulation"))
+        game = new_game(config=GameConfig(play_mode="simulation"))
         screen = ANSI_SGR.sub("", render_observer(game, (133, 49)))
         self.assertIn("NO CONTROLLER", screen)
         self.assertNotIn("BUILT-IN NPC", screen)
@@ -138,9 +139,9 @@ class SimulationModeTests(unittest.TestCase):
             self.assertEqual(ANSI_SGR.sub("", observer_map_cell(game, actor.pos)), actor.symbol)
 
     def test_simulation_has_no_controllers_or_automatic_actions(self):
-        game = Game(config=GameConfig(play_mode='simulation', initial_kill_cooldown=0))
+        game = new_game(config=GameConfig(play_mode='simulation', initial_kill_cooldown=0))
         self.assertEqual(game.npcs, [])
-        self.assertIsNone(game.npc_system)
+        self.assertEqual(game.controllers, [])
         self.assertFalse(game.config.npc_ai_enabled)
         self.assertFalse(game.config.end_on_player_death)
         positions = [actor.pos for actor in game.players]
@@ -156,10 +157,10 @@ class SimulationModeTests(unittest.TestCase):
         self.assertEqual([event['kind'] for event in game.events.snapshot()], ['game_started'])
 
     def test_simulation_ignores_gameplay_keys_and_keeps_display_controls(self):
-        game = Game(config=GameConfig(play_mode="simulation"))
+        game = new_game(config=GameConfig(play_mode="simulation"))
         terminal = Mock()
         terminal.read_keys.side_effect = [["w", "e", "r", "k", "\t", "z", "p"], ["q"]]
-        with patch("src.terminal.runtime.Game", return_value=game), \
+        with patch("src.terminal.runtime.new_game", return_value=game), \
                 patch.object(game, "tick"), patch.object(game, "move_player") as move, \
                 patch.object(game, "interact") as interact, patch.object(game, "report") as report, \
                 patch.object(game, "kill") as kill, patch("src.terminal.runtime.time.sleep"):
@@ -172,16 +173,15 @@ class SimulationModeTests(unittest.TestCase):
         self.assertEqual(game.outcome_reason, "Simulation stopped.")
 
     def test_simulation_meeting_deadline_skips_without_npc_votes(self):
-        game = Game(config=GameConfig(play_mode="simulation", vote_result_seconds=0.8, discussion_seconds=0))
+        game = new_game(config=GameConfig(play_mode="simulation", vote_result_seconds=0.8, discussion_seconds=0))
         game.player_pos = EMERGENCY_POS
         self.assertTrue(game.call_emergency(game.player_id))
         terminal = Mock()
         terminal.read_keys.return_value = []
-        with patch.object(game.meetings, "bot_vote", return_value=None) as vote, \
-                patch("src.terminal.runtime.time.monotonic", side_effect=[0, 0.1, 30, 30, 30.1, 31]), \
+        self.assertEqual(game.controllers, [])  # No NPC controller can vote in a simulation.
+        with patch("src.terminal.runtime.time.monotonic", side_effect=[0, 0.1, 30, 30, 30.1, 31]), \
                 patch("src.terminal.runtime.time.sleep"):
             conduct_meeting(terminal, game)
-        vote.assert_not_called()
         self.assertEqual(game.meetings.last_result, (None, {None: 12}))
         self.assertEqual(game.chat.snapshot(), [])
         self.assertIsNone(game.pending_meeting)

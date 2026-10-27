@@ -1,27 +1,28 @@
-"""Game coordinator. Tasks, NPC decisions, meetings, and event storage are separate systems."""
+"""Game coordinator. Rules live in separate systems; controllers decide for the players."""
 from __future__ import annotations
 import math
 import random
 from collections import deque
 from dataclasses import replace
-from typing import Optional
+from typing import Optional, Sequence
 from .config import GameConfig
+from .controller import Controller
 from .events import EventLog
-from .chat import ChatSystem
-from .meetings import MeetingSystem
+from .systems.chat import ChatSystem
+from .systems.meetings import MeetingSystem
 from .models import EPSILON, WITNESS_SUSPICION, Action, Body, COLORS, MOVE_ACTIONS, Player, Pos
-from ..npcs import NPCSystem
-from .tasks import TaskSystem
-from .vents import VentSystem
-from .sabotage import SabotageSystem
-from .doors import DoorSystem
+from .systems.tasks import TaskSystem
+from .systems.vents import VentSystem
+from .systems.sabotage import SabotageSystem
+from .systems.doors import DoorSystem
 from .world import EMERGENCY_POS, MAP_H, MAP_W, SPAWNS, ShipMap, manhattan, room_at
 
 TICK_STEP = 0.05  # Fixed simulation step in seconds; long ticks are split into these.
 
 
 class Game:
-    def __init__(self, seed: Optional[int] = None, config: Optional[GameConfig] = None) -> None:
+    def __init__(self, seed: Optional[int] = None, config: Optional[GameConfig] = None,
+                 controllers: Sequence[Controller] = ()) -> None:
         self.config = config or GameConfig()
         if seed is not None:
             self.config = replace(self.config, seed=seed)
@@ -64,7 +65,7 @@ class Game:
         self.vents = VentSystem()
         self.sabotage = SabotageSystem(self.config.initial_sabotage_cooldown)
         self.doors = DoorSystem(self.config.initial_door_cooldown)
-        self.npc_system = NPCSystem() if self.config.play_mode == "game" and not self.test_mode else None
+        self.controllers: list[Controller] = list(controllers)
         self.meetings = MeetingSystem()
         self.bodies: list[Body] = []
         self.elapsed = 0.0
@@ -298,19 +299,12 @@ class Game:
             self.tasks.tick(self, step)
             if self.outcome:
                 break
-            if self.npc_system is not None:
-                self.npc_system.tick(self)
+            for controller in self.controllers:
+                controller.tick(self)
             self.check_parity()
             if self.elapsed >= self.config.max_seconds and not self.outcome and not self.test_mode:
                 self.outcome, self.outcome_reason = "timeout", "Episode time limit reached."
                 self.emit("episode_ended", self.outcome_reason, data={"winner": None})
-
-    def move_npc(self, npc: Player) -> None:
-        if self.npc_system is not None:
-            self.npc_system.move(self, npc)
-
-    def choose_npc_goal(self, npc: Player) -> Pos:
-        return self.npc_system.choose_goal(self, npc) if self.npc_system is not None else npc.pos
 
     def find_path(self, start: Pos, goal: Pos) -> list[Pos]:
         return self.world.find_path(start, goal)
@@ -348,9 +342,6 @@ class Game:
         else:
             self.check_parity()
         return True
-
-    def try_impostor_kill(self, impostor: Player) -> bool:
-        return self.kill(impostor.id)
 
     @property
     def test_mode(self) -> bool:
@@ -405,10 +396,6 @@ class Game:
             self.finish("crew", "All impostors have been ejected.")
         elif impostors >= crew:
             self.finish("impostor", "The impostors have reached parity with the crew.")
-
-    def resolve_meeting(self, human_vote: Optional[str]) -> tuple[Optional[str], dict]:
-        votes = {self.player_id: human_vote} if self.player.alive else {}
-        return self.meetings.resolve(self, votes)
 
     def reset_after_meeting(self) -> None:
         for actor in self.players:
