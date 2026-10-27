@@ -39,7 +39,7 @@ class DoorTests(unittest.TestCase):
     def test_closed_doors_are_only_seen_up_close(self):
         from src.terminal.ui import minimap_cell
         game = make_game(player_role="crew")
-        impostor = game.entity(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         game.doors.close(game, impostor.id, "medbay")
         cell = room_doors("medbay")[0].cells[0]
         game.player_pos = (49, 10)  # Cafeteria: far from MedBay
@@ -88,7 +88,7 @@ class DoorTests(unittest.TestCase):
 
     def test_meetings_open_every_door(self):
         game = make_game(player_role="crew")
-        impostor = game.entity(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         game.doors.close(game, impostor.id, "cafeteria")
         game.player_pos = EMERGENCY_POS
         self.assertTrue(game.call_emergency(game.player_id))
@@ -123,7 +123,7 @@ class InitialCooldownTests(unittest.TestCase):
 class NpcDoorTests(unittest.TestCase):
     def setup_medbay(self, **overrides):
         game = make_game(npc_ai_enabled=True, player_role="crew", initial_sabotage_cooldown=1000, **overrides)
-        impostor = game.entity(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         victim = next(actor for actor in game.npcs if actor.role == "crew")
         impostor.pos, victim.pos = (30, 18), (34, 18)
         return game, impostor, victim
@@ -161,7 +161,7 @@ class NpcDoorTests(unittest.TestCase):
 
     def test_test_mode_npcs_stay_idle(self):
         game = make_game(test_mode=True, player_role="crew")
-        impostor = game.entity(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         victim = next(actor for actor in game.npcs if actor.role == "crew")
         impostor.pos, victim.pos = (30, 18), (34, 18)
         game.tick(0.01)

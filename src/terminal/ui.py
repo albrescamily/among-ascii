@@ -5,10 +5,10 @@ import textwrap
 from dataclasses import dataclass
 from typing import Optional
 from ..core.engine import Game
-from ..core.models import Player, Body, Pos
+from ..core.models import EPSILON, Player, Body, Pos
 from .palette import *
-from ..core.world import CONTAINERS, MAP_W, MAP_H, ROOM_LABELS, DOOR_CELLS, EMERGENCY_POS, manhattan, room_at
-from ..core.tasks import TASK_NAMES
+from ..core.world import (CONTAINERS, MAP_W, MAP_H, ROOM_LABELS, DOOR_CELLS, EMERGENCY_POS, TASK_NAMES,
+                          manhattan, room_at)
 from ..core.sabotage import TITLES
 from ..core.doors import DOOR_KEYS, DOOR_ROOMS, room_doors
 from .text import (ANSI_SGR, MIN_COLUMNS, MIN_ROWS, terminal_size, display_width,
@@ -59,7 +59,7 @@ def keys_line(pairs: list[tuple[str, str]]) -> str:
 
 
 def expand_map_cell(cell: str, zoom: int) -> str:
-    """Give map tiles a square aspect ratio without duplicating entity symbols."""
+    """Give map tiles a square aspect ratio without duplicating player symbols."""
     if zoom == 1 or display_width(cell) == zoom:
         return cell
     glyph = ANSI_SGR.sub("", cell)
@@ -93,7 +93,7 @@ def sabotage_alert(game: Game) -> str:
     instruction = "Repair ! panels" if game.config.play_mode == "simulation" else "E: repair ! panels"
     if not system.critical:
         return BOLD + RED + f" ! {TITLES[system.kind]} | crew vision reduced | " + instruction + RESET
-    return (BOLD + RED + f" ! {TITLES[system.kind]} | {math.ceil(max(0, system.remaining - 1e-9)):02d}s"
+    return (BOLD + RED + f" ! {TITLES[system.kind]} | {math.ceil(max(0, system.remaining - EPSILON)):02d}s"
             + " | " + instruction + RESET)
 
 
@@ -102,7 +102,7 @@ def sabotage_panel(game: Game, width: int) -> list[str]:
     system = game.sabotage
     if not system.kind:
         return []
-    status = (f"{math.ceil(max(0, system.remaining - 1e-9))}s left" if system.critical
+    status = (f"{math.ceil(max(0, system.remaining - EPSILON))}s left" if system.critical
               else "vision reduced")
     lines = [panel_heading("CRITICAL EMERGENCY" if system.critical else "LIGHTS OUT", width, RED),
              " " + BOLD + RED + TITLES[system.kind] + RESET + GRAY + " | " + RESET + YELLOW + status + RESET]
@@ -166,7 +166,7 @@ def clock_text(seconds: float) -> str:
 
 
 def cooldown_text(seconds: float) -> str:
-    return GREEN + BOLD + "READY" + RESET if seconds <= 1e-9 else YELLOW + f"{math.ceil(seconds - 1e-9)}s" + RESET
+    return GREEN + BOLD + "READY" + RESET if seconds <= EPSILON else YELLOW + f"{math.ceil(seconds - EPSILON)}s" + RESET
 
 
 VIEW_NAMES = {"player": "PLAYER VIEW", "god": "GOD VIEW", "minimap": "MINI MAP"}
@@ -499,8 +499,8 @@ def render_game(game: Game, size: Optional[tuple[int, int]] = None) -> str:
                       else " Lights out: fix the ! panel in Electrical.") + RESET
     elif game.player.role == "impostor" and game.config.sabotage_enabled:
         hint = RED + " Sabotage ready: F Reactor / G O2 / J Admin / L Lights" + RESET
-        if game.sabotage.cooldown > 1e-9:
-            hint = GRAY + f" Sabotage in {math.ceil(game.sabotage.cooldown - 1e-9)}s" + RESET
+        if game.sabotage.cooldown > EPSILON:
+            hint = GRAY + f" Sabotage in {math.ceil(game.sabotage.cooldown - EPSILON)}s" + RESET
     elif game.player.vent_id is not None:
         hint = MAGENTA + " Hidden | kill cooldown paused" + RESET
     elif game.active_task:
@@ -686,13 +686,13 @@ def doors_panel(game: Game, width: int) -> list[str]:
         lines.append(GRAY + f" Acting as {actor.name} (impostor)." + RESET)
     if game.sabotage.kind:
         lines.append(GRAY + " Locked during sabotage." + RESET)
-    elif doors.initial_cooldown > 1e-9:
-        lines.append(YELLOW + f" Doors ready in {math.ceil(doors.initial_cooldown - 1e-9)}s." + RESET)
+    elif doors.initial_cooldown > EPSILON:
+        lines.append(YELLOW + f" Doors ready in {math.ceil(doors.initial_cooldown - EPSILON)}s." + RESET)
     for key, room_id in DOOR_KEYS.items():
         if room_id in doors.closed:
-            state = RED + BOLD + f"++ {math.ceil(doors.closed[room_id] - 1e-9)}s" + RESET
-        elif doors.cooldowns.get(room_id, 0.0) > 1e-9:
-            state = GRAY + f"wait {math.ceil(doors.cooldowns[room_id] - 1e-9)}s" + RESET
+            state = RED + BOLD + f"++ {math.ceil(doors.closed[room_id] - EPSILON)}s" + RESET
+        elif doors.cooldowns.get(room_id, 0.0) > EPSILON:
+            state = GRAY + f"wait {math.ceil(doors.cooldowns[room_id] - EPSILON)}s" + RESET
         elif actor is None or doors.refusal(game, actor.id, room_id):
             state = GRAY + "--" + RESET
         else:
@@ -785,11 +785,11 @@ VOTE_KEYS = "123456789abc"
 
 
 def meeting_reason(game: Game, reporter_id: str, body: Optional[Body]) -> str:
-    reporter = game.entity(reporter_id)
+    reporter = game.get_player(reporter_id)
     who = BOLD + reporter.color + reporter.name + RESET
     if body is None:
         return BOLD + YELLOW + "Emergency button" + RESET + GRAY + " pressed by " + RESET + who + GRAY + "." + RESET
-    victim = game.entity(body.victim_id)
+    victim = game.get_player(body.victim_id)
     # The room stays secret: the reporter has to say where in the chat.
     return (BOLD + victim.color + body.victim_name + RESET + " body found." + GRAY + " Reported by " + RESET
             + who + GRAY + "." + RESET)
@@ -809,7 +809,7 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
     inner = 55
     width = inner - 2
     meetings = game.meetings
-    alive = [game.entity(entity_id) for entity_id in game.alive_ids()]
+    alive = [game.get_player(player_id) for player_id in game.alive_ids()]
     voted = sum(actor.id in meetings.votes for actor in alive)
     discussion = not meetings.voting_open
     remaining = math.ceil(meetings.phase_remaining)
@@ -818,7 +818,7 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
     clock = f"{clock_color}{BOLD}{phase} {remaining:>2}s{RESET}"
     tally = (f"{GRAY}ballots soon{RESET}" if discussion else f"{GRAY}{voted}/{len(alive)} voted{RESET}")
     bar_width = width - display_width(clock) - display_width(tally) - 4
-    timer = (clock + " " + progress_bar(meetings.phase_remaining / max(1e-9, meetings.phase_duration), bar_width)
+    timer = (clock + " " + progress_bar(meetings.phase_remaining / max(EPSILON, meetings.phase_duration), bar_width)
              + "  " + tally)
 
     question = (BOLD + CYAN + "Discuss first: who looks suspicious?" + RESET if discussion
@@ -840,7 +840,7 @@ def render_meeting(game: Game, reporter_id: str, body: Optional[Body], prompt: s
         content.append(GRAY + " Missing ballots count as skips." + RESET)
     if game.player_id in meetings.votes:
         choice = meetings.votes[game.player_id]
-        target = (game.entity(choice).color + game.name_of(choice) + RESET) if choice else GRAY + "Skip" + RESET
+        target = (game.get_player(choice).color + game.name_of(choice) + RESET) if choice else GRAY + "Skip" + RESET
         content.append(" " + GREEN + BOLD + "✓ Your vote: " + RESET + target
                        + GRAY + "  · waiting for the others" + RESET)
     elif not can_vote:
@@ -886,7 +886,7 @@ def render_vote_result(
         if target is None:
             label = GRAY + "○ Skip" + RESET
         else:
-            actor = game.entity(target)
+            actor = game.get_player(target)
             label = BOLD + actor.color + "● " + actor.name + RESET
         if target == ejected and ejected is not None:
             tag = RED + BOLD + " ◀ ejected" + RESET
@@ -907,7 +907,7 @@ def render_vote_result(
                else "Most players skipped." if leaders == [None] else "Not enough votes.")
         outcome = [BOLD + WHITE + "Nobody was ejected." + RESET, GRAY + why + RESET]
     else:
-        actor = game.entity(ejected)
+        actor = game.get_player(ejected)
         # The simulation spectator is not a player: never "You were" there.
         you = ejected == game.player_id and game.config.play_mode != "simulation"
         who = "You were" if you else "They were"

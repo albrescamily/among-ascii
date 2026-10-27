@@ -180,7 +180,7 @@ def message_rows(game: Game, width: int, compact: bool = False) -> list[ChatRow]
     rows = []
     previous = None
     for message in game.chat.messages:
-        color = game.entity(message.sender).color
+        color = game.get_player(message.sender).color
         own = (message.sender == game.player_id and game.config.play_mode == "game")
         author = BOLD + color + message.color + RESET + (GRAY + " (you)" + RESET if own else "")
         clock = GRAY + timestamp(message.time) + RESET
@@ -249,10 +249,10 @@ def meeting_context(game: Game) -> str:
     if not game.pending_meeting:
         return GRAY + "Live game" + RESET
     reporter_id, body = game.pending_meeting
-    reporter = game.entity(reporter_id)
+    reporter = game.get_player(reporter_id)
     who = reporter.color + reporter.name + RESET
     if body is not None:
-        victim = game.entity(body.victim_id)
+        victim = game.get_player(body.victim_id)
         return BOLD + RED + "Body found" + RESET + GRAY + ": " + RESET + victim.color + body.victim_name + RESET + GRAY + " · reported by " + RESET + who
     return BOLD + YELLOW + "Emergency meeting" + RESET + GRAY + " · called by " + RESET + who
 

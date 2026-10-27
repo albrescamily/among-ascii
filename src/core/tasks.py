@@ -1,26 +1,12 @@
-"""Task catalog, per-player assignments, interaction, and timed progress."""
+"""Per-player task assignments, interaction, and timed progress."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
-from .models import Pos
+from .models import EPSILON, Pos
+from .world import TASK_NAMES, TASK_POSITIONS
 if TYPE_CHECKING:
     from .engine import Game
 
-TASK_NAMES = {
-    (10, 7): "Align upper engine", (20, 10): "Fuel upper engine",
-    (40, 4): "Download cafeteria data", (58, 3): "Empty garbage",
-    (74, 7): "Clear asteroids", (83, 10): "Download weapons data",
-    (28, 17): "Inspect sample", (35, 20): "Submit scan",
-    (3, 18): "Start reactor", (10, 24): "Unlock manifolds",
-    (19, 23): "Check cameras", (72, 20): "Clean O2 filter",
-    (88, 18): "Chart course", (93, 25): "Stabilize steering",
-    (64, 17): "Swipe card", (57, 22): "Upload data",
-    (34, 26): "Calibrate distributor", (39, 30): "Fix wiring",
-    (48, 30): "Fill fuel can", (58, 37): "Empty chute",
-    (10, 33): "Align lower engine", (20, 36): "Fuel lower engine",
-    (83, 36): "Prime shields", (65, 39): "Download comms data",
-}
-TASK_POSITIONS: tuple[Pos, ...] = tuple(TASK_NAMES)
 
 @dataclass
 class TaskState:
@@ -31,9 +17,8 @@ class TaskState:
 
 
 class TaskSystem:
-    def __init__(self, game: "Game") -> None:
-        self.states = {actor.id: TaskState(self.assign(game) if actor.role == "crew" else [])
-                       for actor in game.players}
+    def __init__(self, assignments: dict[str, list[Pos]]) -> None:
+        self.states = {player_id: TaskState(tasks) for player_id, tasks in assignments.items()}
 
     @staticmethod
     def assign(game: "Game") -> list[Pos]:
@@ -48,7 +33,7 @@ class TaskSystem:
                 "fraction": completed / total if total else 0.0}
 
     def start(self, game: "Game", player_id: str) -> bool:
-        actor = game.entity(player_id)
+        actor = game.get_player(player_id)
         state = self.states[player_id]
         available = [pos for pos in state.assigned if pos not in state.completed
                      and game.distance(actor.pos, pos) <= 1]
@@ -80,7 +65,7 @@ class TaskSystem:
                 self.cancel(game, actor.id, "Task interrupted.")
                 continue
             state.progress = min(1.0, state.progress + dt / game.config.task_seconds)
-            if state.progress >= 1.0 - 1e-9:
+            if state.progress >= 1.0 - EPSILON:
                 finished = state.active
                 state.completed.add(finished)
                 state.active, state.progress = None, 0.0

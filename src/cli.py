@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from .core.config import GameConfig
 from .core.models import COLORS
+from .core.world import TASK_POSITIONS
 from .terminal.runtime import run
 
 
@@ -18,11 +19,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="game-mode sandbox: idle NPCs, X swaps role, N resets")
     parser.add_argument("--allow-god-view", action=argparse.BooleanOptionalAction, default=None,
                         help="let Caps Lock open the God view in game mode")
-    parser.add_argument("--players", type=int, help="total players, including the local player (1-12)")
+    parser.add_argument("--players", type=int, help=f"total players, including the local player (1-{len(COLORS)})")
     parser.add_argument("--impostors", type=int, help="number of impostors")
     parser.add_argument("--player-color", choices=[color.name for color in COLORS])
     parser.add_argument("--player-role", choices=["crew", "impostor", "random"])
-    parser.add_argument("--tasks", type=int, help="tasks assigned to each crewmate (0-24)")
+    parser.add_argument("--tasks", type=int, help=f"tasks assigned to each crewmate (0-{len(TASK_POSITIONS)})")
     parser.add_argument("--dump-config", metavar="PATH", help="write validated settings to JSON and exit")
     args = parser.parse_args(argv)
     try:

@@ -16,8 +16,8 @@ from src.terminal.ui import render_meeting
 class ChatTests(unittest.TestCase):
     def test_broadcast_reaches_distant_and_dead_players_without_mutable_aliases(self):
         game = Game(config=GameConfig(npc_ai_enabled=False))
-        game.entity('red').pos = (0, 0)
-        game.entity('blue').alive = False
+        game.get_player('red').pos = (0, 0)
+        game.get_player('blue').alive = False
         game.meetings.call(game, 'cyan')
         self.assertTrue(game.apply_action('cyan', Action('chat', message='Hello world')))
         for actor in game.players:
@@ -30,7 +30,7 @@ class ChatTests(unittest.TestCase):
 
     def test_dead_and_ejected_players_cannot_send_in_game_or_meetings(self):
         game = Game(config=GameConfig(end_on_player_death=False, initial_kill_cooldown=0))
-        attacker = game.entity(game.impostor_id)
+        attacker = game.get_player(game.impostor_id)
         victim = next(actor for actor in game.npcs if actor.role == "crew")
         attacker.pos, victim.pos = (12, 7), (12, 8)
         self.assertTrue(game.kill(attacker.id, victim.id))
@@ -64,7 +64,7 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(len(game.chat.messages), 0)
         game.npc_system.greet(game)
         self.assertEqual(len(game.chat.messages), 0)
-        game.entity("red").alive = False
+        game.get_player("red").alive = False
         game.meetings.call(game, "cyan")
         game.npc_system.greet(game)
         game.tick(0.2)

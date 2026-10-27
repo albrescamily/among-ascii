@@ -3,12 +3,10 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
-from .tasks import TASK_POSITIONS
+from .models import Pos
 
 MAP_W = 97
 MAP_H = 41
-
-Pos = tuple[int, int]
 
 
 @dataclass(frozen=True)
@@ -107,6 +105,21 @@ SPAWNS: tuple[Pos, ...] = (
     (49, 10), (47, 7), (51, 7), (47, 10), (51, 10), (41, 7),
     (57, 7), (43, 8), (55, 8), (48, 5), (50, 5), (49, 11),
 )
+TASK_NAMES = {
+    (10, 7): "Align upper engine", (20, 10): "Fuel upper engine",
+    (40, 4): "Download cafeteria data", (58, 3): "Empty garbage",
+    (74, 7): "Clear asteroids", (83, 10): "Download weapons data",
+    (28, 17): "Inspect sample", (35, 20): "Submit scan",
+    (3, 18): "Start reactor", (10, 24): "Unlock manifolds",
+    (19, 23): "Check cameras", (72, 20): "Clean O2 filter",
+    (88, 18): "Chart course", (93, 25): "Stabilize steering",
+    (64, 17): "Swipe card", (57, 22): "Upload data",
+    (34, 26): "Calibrate distributor", (39, 30): "Fix wiring",
+    (48, 30): "Fill fuel can", (58, 37): "Empty chute",
+    (10, 33): "Align lower engine", (20, 36): "Fuel lower engine",
+    (83, 36): "Prime shields", (65, 39): "Download comms data",
+}
+TASK_POSITIONS: tuple[Pos, ...] = tuple(TASK_NAMES)
 VENT_POSITIONS: dict[str, Pos] = {
     "upper_engine": (21, 7), "cafeteria": (56, 10), "weapons": (80, 5),
     "medbay": (28, 20), "reactor_lower": (3, 24), "reactor_upper": (10, 18),
@@ -191,7 +204,10 @@ def room_at(pos: Pos) -> str:
 
 
 class ShipMap:
-    """Static geometry, collision, pathfinding, and visibility."""
+    """Per-game grid, collision, pathfinding, and visibility.
+
+    The layout is fixed, but the grid is not static: door sabotage switches
+    doorway cells between open and closed (`doors.py`)."""
 
     def __init__(self) -> None:
         self.grid = build_map()

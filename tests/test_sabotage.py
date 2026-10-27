@@ -57,17 +57,17 @@ class SabotageTests(unittest.TestCase):
             crew = [a for a in game.players if a.role == "crew"]
             start(game, "reactor")
             crew[0].pos = PANELS["reactor"][0].pos
-            game.interact_entity(crew[0].id)
+            game.interact(crew[0].id)
             game.tick(4)
             self.assertEqual(game.sabotage.progress[0], 0)
             crew[1].pos = PANELS["reactor"][1].pos
-            game.interact_entity(crew[1].id)
+            game.interact(crew[1].id)
             game.tick(1)
             self.assertGreater(game.sabotage.progress[0], 0)
-            self.assertTrue(game.move_entity(crew[1].id, 1, 0))
+            self.assertTrue(game.move(crew[1].id, 1, 0))
             game.tick(1)
             self.assertFalse(any(game.sabotage.progress.values()))
-            game.interact_entity(crew[1].id)
+            game.interact(crew[1].id)
             game.tick(3)
             self.assertIsNone(game.sabotage.kind)
 
@@ -91,9 +91,9 @@ class SabotageTests(unittest.TestCase):
             self.assertFalse(start(game, "reactor"))
             game.tick(2)
             self.assertFalse(game.apply_action(game.player_id, Action("sabotage", "reactor")))
-            game.entity(game.impostor_id).alive = False
+            game.get_player(game.impostor_id).alive = False
             self.assertFalse(start(game, "reactor"))
-            game.entity(game.impostor_id).alive = True
+            game.get_player(game.impostor_id).alive = True
             self.assertTrue(start(game, "reactor"))
             self.assertFalse(start(game, "o2"))
             disabled = make_game(mode, sabotage_enabled=False)
@@ -103,9 +103,9 @@ class SabotageTests(unittest.TestCase):
         for state in ("dead", "vented"):
             game = make_game("simulation")
             start(game, "admin")
-            worker = game.entity(game.impostor_id)
+            worker = game.get_player(game.impostor_id)
             worker.pos = PANELS["admin"][0].pos
-            game.interact_entity(worker.id)
+            game.interact(worker.id)
             game.tick(1)
             if state == "dead":
                 worker.alive = False
@@ -175,7 +175,7 @@ class LightsSabotageTests(unittest.TestCase):
         for mode in ("game", "simulation"):
             game = make_game(mode)
             crew = next(a for a in game.players if a.role == "crew")
-            impostor = game.entity(game.impostor_id)
+            impostor = game.get_player(game.impostor_id)
             full = game.config.vision_radius
             self.assertEqual(game.vision_radius(crew.id), full)
             self.assertTrue(start(game, "lights"))
@@ -187,7 +187,7 @@ class LightsSabotageTests(unittest.TestCase):
             self.assertIsNone(game.outcome)
             self.assertEqual(game.sabotage.kind, "lights")
             crew.pos = PANELS["lights"][0].pos
-            self.assertTrue(game.interact_entity(crew.id))
+            self.assertTrue(game.interact(crew.id))
             game.tick(3)
             self.assertIsNone(game.sabotage.kind)
             self.assertEqual(game.vision_radius(crew.id), full)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
+from .models import EPSILON
 if TYPE_CHECKING:
     from .engine import Game
 
@@ -24,14 +25,14 @@ class ChatSystem:
         self.sequence = 0
 
     def can_send(self, game: "Game", sender_id: str) -> bool:
-        actor = game.entity(sender_id)
+        actor = game.get_player(sender_id)
         return (actor.alive and not game.outcome and game.pending_meeting is not None
-                and game.meetings.remaining > 1e-9)
+                and game.meetings.remaining > EPSILON)
 
     def send(self, game: "Game", sender_id: str, message: str) -> bool:
         if not self.can_send(game, sender_id) or not isinstance(message, str):
             return False
-        actor = game.entity(sender_id)
+        actor = game.get_player(sender_id)
         # Never allow chat text to execute terminal escapes or add rows.
         clean = " ".join("".join(char if char.isprintable() else " " for char in message).split())
         if not clean or len(message) > self.max_length:

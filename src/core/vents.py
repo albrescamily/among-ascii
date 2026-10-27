@@ -1,6 +1,7 @@
 """Impostor vent traversal and visibility of entry/exit events."""
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from .models import EPSILON, WITNESS_SUSPICION
 from .world import VENT_LINKS, VENT_POSITIONS, manhattan, room_at
 
 if TYPE_CHECKING:
@@ -9,7 +10,7 @@ if TYPE_CHECKING:
 
 class VentSystem:
     def nearby(self, game: "Game", player_id: str) -> str | None:
-        actor = game.entity(player_id)
+        actor = game.get_player(player_id)
         candidates = [key for key, pos in VENT_POSITIONS.items()
                       if manhattan(actor.pos, pos) <= 1
                       and game.has_line_of_sight(actor.pos, pos, 1)]
@@ -17,9 +18,9 @@ class VentSystem:
                    default=None)
 
     def use(self, game: "Game", player_id: str, target: str | None = None) -> bool:
-        actor = game.entity(player_id)
+        actor = game.get_player(player_id)
         if (not actor.alive or actor.role != "impostor" or game.outcome
-                or game.pending_meeting or actor.move_clock > 1e-9):
+                or game.pending_meeting or actor.move_clock > EPSILON):
             return False
         if actor.vent_id is None:
             source = self.nearby(game, player_id)
@@ -49,18 +50,18 @@ class VentSystem:
         return True
 
     def emit_surface_event(self, game: "Game", player_id: str, kind: str, vent: str) -> None:
-        actor = game.entity(player_id)
+        actor = game.get_player(player_id)
         witnesses = [other for other in game.players
                      if other.id != player_id and game.can_see(other.id, actor.pos)]
         for other in witnesses:
-            other.suspicion[player_id] = other.suspicion.get(player_id, 0.0) + 8.0
+            other.suspicion[player_id] = other.suspicion.get(player_id, 0.0) + WITNESS_SUSPICION
         verb = "entered" if kind == "vent_entered" else "exited"
         game.emit(kind, f"{actor.name} {verb} a vent in {room_at(actor.pos)}.", actor=player_id,
                   data={"vent": vent, "position": list(actor.pos)},
                   visible_to=[player_id, *(other.id for other in witnesses)])
 
     def observe(self, game: "Game", player_id: str) -> dict:
-        actor = game.entity(player_id)
+        actor = game.get_player(player_id)
         nearby = self.nearby(game, player_id) if actor.alive and actor.role == "impostor" else None
         return {"current": actor.vent_id, "nearby": nearby,
                 "connections": [{"id": key, "room": room_at(VENT_POSITIONS[key]),

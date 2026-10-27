@@ -2,7 +2,7 @@
 from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Optional
-from .models import Body
+from .models import EPSILON, Body
 if TYPE_CHECKING:
     from .engine import Game
 
@@ -23,7 +23,7 @@ class MeetingSystem:
 
     @property
     def voting_open(self) -> bool:
-        return self.elapsed + 1e-9 >= self.discussion
+        return self.elapsed + EPSILON >= self.discussion
 
     @property
     def phase(self) -> str:
@@ -41,7 +41,7 @@ class MeetingSystem:
     def call(self, game: "Game", reporter_id: str, body: Optional[Body] = None) -> bool:
         if not game.config.meetings_enabled or self.pending or game.outcome:
             return False
-        reporter = game.entity(reporter_id)
+        reporter = game.get_player(reporter_id)
         if not reporter.alive or reporter.vent_id is not None:
             return False
         if game.sabotage.kind:
@@ -82,7 +82,7 @@ class MeetingSystem:
         self.elapsed = min(self.duration, self.elapsed + dt)
         if game.npc_system is not None:
             game.npc_system.meeting_tick(game)
-        if self.remaining <= 1e-9 or set(game.alive_ids()) <= self.votes.keys():
+        if self.remaining <= EPSILON or set(game.alive_ids()) <= self.votes.keys():
             # Missing ballots are skips, including players that time out.
             ballots = {actor: self.votes.get(actor) for actor in game.alive_ids()}
             self.resolve(game, ballots)
@@ -107,7 +107,7 @@ class MeetingSystem:
         leaders = [target for target, count in ranked if count == high]
         ejected = leaders[0] if len(leaders) == 1 and high > counts.get(None, 0) else None
         if ejected:
-            actor = game.entity(ejected)
+            actor = game.get_player(ejected)
             actor.alive = False
             actor.path = []
         self.number += 1

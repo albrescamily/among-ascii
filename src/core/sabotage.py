@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from .models import Pos
+from .models import EPSILON, Pos
 
 if TYPE_CHECKING:
     from .engine import Game
@@ -28,10 +28,10 @@ CRITICAL = frozenset({"reactor", "o2", "admin"})
 
 
 class SabotageSystem:
-    def __init__(self, game: "Game") -> None:
+    def __init__(self, initial_cooldown: float = 0.0) -> None:
         self.kind: str | None = None
         self.remaining = 0.0
-        self.cooldown = game.config.initial_sabotage_cooldown
+        self.cooldown = initial_cooldown
         self.workers: dict[str, int] = {}
         self.progress: dict[int, float] = {}
         self.completed: set[int] = set()
@@ -46,9 +46,9 @@ class SabotageSystem:
         return PANELS.get(self.kind, ())
 
     def start(self, game: "Game", actor_id: str, kind: str) -> bool:
-        actor = game.entity(actor_id)
+        actor = game.get_player(actor_id)
         if (kind not in PANELS or not game.config.sabotage_enabled
-                or self.kind or self.cooldown > 1e-9 or game.outcome or game.pending_meeting
+                or self.kind or self.cooldown > EPSILON or game.outcome or game.pending_meeting
                 or not actor.alive or actor.role != "impostor"):
             return False
         self.kind = kind
@@ -70,7 +70,7 @@ class SabotageSystem:
         return True
 
     def nearby_panel(self, game: "Game", actor_id: str) -> int | None:
-        actor = game.entity(actor_id)
+        actor = game.get_player(actor_id)
         if not actor.alive or actor.vent_id is not None:
             return None
         return next((i for i, panel in enumerate(self.panels)
@@ -113,7 +113,7 @@ class SabotageSystem:
         """Assign only the responders needed; reserve different stations."""
         for assigned, index in list(self.responders.items()):
             human_holding = self.workers.get(game.player_id) == index
-            if not game.entity(assigned).alive or index in self.completed or human_holding:
+            if not game.get_player(assigned).alive or index in self.completed or human_holding:
                 self.responders.pop(assigned)
                 self.cancel_worker(assigned)
         taken = set(self.responders.values()) | set(self.workers.values()) | self.completed
@@ -136,7 +136,7 @@ class SabotageSystem:
         if self.critical:
             dt = min(dt, self.remaining)
         for actor_id, index in list(self.workers.items()):
-            actor = game.entity(actor_id)
+            actor = game.get_player(actor_id)
             if (index in self.completed or not actor.alive or actor.vent_id is not None
                     or game.distance(actor.pos, self.panels[index].pos) > 1):
                 self.cancel_worker(actor_id)
@@ -149,7 +149,7 @@ class SabotageSystem:
             if index in occupied and (not simultaneous or ready):
                 self.progress[index] = min(1.0, self.progress.get(index, 0.0)
                                            + dt / game.config.sabotage_repair_seconds)
-                if self.progress[index] >= 1.0 - 1e-9:
+                if self.progress[index] >= 1.0 - EPSILON:
                     self.completed.add(index)
                     game.emit("sabotage_panel_repaired", f"{panel.name}: repair complete.",
                               data={"kind": self.kind, "panel": index})
@@ -161,7 +161,7 @@ class SabotageSystem:
         if not self.critical:
             return
         self.remaining = max(0.0, self.remaining - dt)
-        if self.remaining <= 1e-9:
+        if self.remaining <= EPSILON:
             game.finish("impostor", f"{TITLES[self.kind]}: the crew ran out of time.")
             if not game.outcome:  # Test mode: the round goes on.
                 self.clear(game)

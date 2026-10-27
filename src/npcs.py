@@ -4,13 +4,18 @@ This module is not used by simulation mode.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from .core.models import Player, Pos
-from .core.tasks import TASK_POSITIONS
-from .core.world import VENT_IDS, room_at
+from .core.models import EPSILON, Player, Pos
+from .core.world import TASK_POSITIONS, VENT_IDS, room_at
 from .core.sabotage import PANELS
 from .core.doors import DOOR_ROOMS
 
 ROOM_IDS = {name: room_id for room_id, name in DOOR_ROOMS.items()}
+VOTE_START, VOTE_SPREAD = 0.15, 0.60  # Ballots land between 15% and 75% of the voting phase.
+SKIP_VOTE_CHANCE = 0.16
+BASE_VOTE_WEIGHT = 0.7  # Weight of a candidate nobody suspects yet.
+KEEP_GOAL_CHANCE = 0.55  # A wandering NPC keeps its current goal this often.
+IMPOSTOR_RETHINK_SECONDS = 0.8
+CREW_RETHINK_SECONDS = (1.5, 3.2)  # Random range between route re-plans.
 if TYPE_CHECKING:
     from .core.engine import Game
 
@@ -28,7 +33,7 @@ class NPCSystem:
         voters = [actor.id for actor in game.npcs if actor.alive]
         game.rng.shuffle(voters)
         for index, actor_id in enumerate(voters):
-            fraction = 0.15 + 0.60 * (index + game.rng.uniform(0.1, 0.9)) / len(voters)
+            fraction = VOTE_START + VOTE_SPREAD * (index + game.rng.uniform(0.1, 0.9)) / len(voters)
             # Ballots only open after the discussion; spread votes across the voting window.
             voting = game.meetings.duration - game.meetings.discussion
             self.meeting_vote_times[actor_id] = game.meetings.discussion + voting * fraction
@@ -48,17 +53,17 @@ class NPCSystem:
             return
         for actor in game.npcs:
             if (actor.alive and actor.id not in game.meetings.votes
-                    and game.meetings.elapsed + 1e-9 >= self.meeting_vote_times.get(actor.id, game.meetings.duration)):
+                    and game.meetings.elapsed + EPSILON >= self.meeting_vote_times.get(actor.id, game.meetings.duration)):
                 game.meetings.submit(game, actor.id, game.meetings.bot_vote(game, actor.id))
 
     def vote(self, game: "Game", voter_id: str) -> str | None:
-        voter = game.entity(voter_id)
-        options = [entity_id for entity_id in game.alive_ids() if entity_id != voter_id]
-        if not options or game.rng.random() < 0.16:
+        voter = game.get_player(voter_id)
+        options = [player_id for player_id in game.alive_ids() if player_id != voter_id]
+        if not options or game.rng.random() < SKIP_VOTE_CHANCE:
             return None
         if voter.role == "impostor":
-            options = [i for i in options if game.entity(i).role == "crew"] or options
-        weights = [0.7 + voter.suspicion.get(candidate, 0.0) for candidate in options]
+            options = [i for i in options if game.get_player(i).role == "crew"] or options
+        weights = [BASE_VOTE_WEIGHT + voter.suspicion.get(candidate, 0.0) for candidate in options]
         return game.rng.choices(options, weights=weights, k=1)[0]
 
     def choose_goal(self, game: "Game", actor: Player) -> Pos:
@@ -77,7 +82,7 @@ class NPCSystem:
             remaining = [pos for pos in state.assigned if pos not in state.completed]
             if remaining:
                 return min(remaining, key=lambda pos: game.distance(actor.pos, pos))
-        if actor.goal and actor.pos != actor.goal and game.rng.random() < 0.55:
+        if actor.goal and actor.pos != actor.goal and game.rng.random() < KEEP_GOAL_CHANCE:
             return actor.goal
         return game.rng.choice(TASK_POSITIONS)
 
@@ -95,7 +100,8 @@ class NPCSystem:
         if actor.rethink_clock <= 0 or not actor.path:
             actor.goal = self.choose_goal(game, actor)
             actor.path = game.world.find_path(actor.pos, actor.goal, use_vents=actor.role == "impostor")
-            actor.rethink_clock = 0.8 if actor.role == "impostor" else game.rng.uniform(1.5, 3.2)
+            actor.rethink_clock = (IMPOSTOR_RETHINK_SECONDS if actor.role == "impostor"
+                                  else game.rng.uniform(*CREW_RETHINK_SECONDS))
         if actor.path and actor.path[0] == actor.pos:
             actor.path.pop(0)
         if actor.path:
@@ -103,7 +109,7 @@ class NPCSystem:
             if actor.role == "impostor" and game.distance(actor.pos, step) > 1:
                 game.vents.use(game, actor.id)
                 return
-            if game.move_entity(actor.id, step[0] - actor.pos[0], step[1] - actor.pos[1]):
+            if game.move(actor.id, step[0] - actor.pos[0], step[1] - actor.pos[1]):
                 actor.path.pop(0)
             else:
                 # Break traffic jams without teleporting or stacking players.
@@ -111,7 +117,7 @@ class NPCSystem:
                         if game.is_walkable((actor.pos[0] + dx, actor.pos[1] + dy))
                         and not game.occupied((actor.pos[0] + dx, actor.pos[1] + dy), actor.id)]
                 if free:
-                    game.move_entity(actor.id, *game.rng.choice(free))
+                    game.move(actor.id, *game.rng.choice(free))
                 actor.path = []
 
     def trap(self, game: "Game", impostor: Player) -> None:
@@ -130,7 +136,7 @@ class NPCSystem:
         if not game.config.npc_ai_enabled:
             return
         npc_sabotage = game.player.role != "impostor"
-        if (npc_sabotage and not game.sabotage.kind and game.sabotage.cooldown <= 1e-9
+        if (npc_sabotage and not game.sabotage.kind and game.sabotage.cooldown <= EPSILON
                 and game.config.sabotage_enabled):
             impostor = next((a for a in game.npcs if a.alive and a.role == "impostor"), None)
             if impostor is not None:

@@ -109,7 +109,7 @@ class GameTests(unittest.TestCase):
 
     def test_impostor_can_create_body(self):
         game = Game(seed=4)
-        impostor = game.npc(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         victim = next(n for n in game.npcs if n.role == "crew")
         impostor.pos = (12, 8)
         victim.pos = (12, 7)
@@ -172,7 +172,7 @@ class RenderingTests(unittest.TestCase):
 
     def test_vote_results_explain_the_outcome_and_fit(self):
         game = Game(config=GameConfig(npc_ai_enabled=False, seed=7, player_role="crew"))
-        impostor = game.entity(game.impostor_id)
+        impostor = game.get_player(game.impostor_id)
         impostor.alive = False
         with patch("src.terminal.text.shutil.get_terminal_size", return_value=(80, 24)):
             screen = ANSI_SGR.sub("", render_vote_result(game, impostor.id, {impostor.id: 6, None: 3}))

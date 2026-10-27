@@ -9,13 +9,15 @@ from .config import GameConfig
 from .events import EventLog
 from .chat import ChatSystem
 from .meetings import MeetingSystem
-from .models import Action, Body, COLORS, MOVE_ACTIONS, Player, Pos
+from .models import EPSILON, WITNESS_SUSPICION, Action, Body, COLORS, MOVE_ACTIONS, Player, Pos
 from ..npcs import NPCSystem
 from .tasks import TaskSystem
 from .vents import VentSystem
 from .sabotage import SabotageSystem
 from .doors import DoorSystem
 from .world import EMERGENCY_POS, MAP_H, MAP_W, SPAWNS, ShipMap, manhattan, room_at
+
+TICK_STEP = 0.05  # Fixed simulation step in seconds; long ticks are split into these.
 
 
 class Game:
@@ -42,7 +44,7 @@ class Game:
                                kill_clock=self.config.initial_kill_cooldown,
                                emergencies_left=self.config.emergencies_per_player)
                         for index, color in enumerate(colors[:self.config.player_count])]
-        self._entities = {actor.id: actor for actor in self.players}
+        self._players_by_id = {actor.id: actor for actor in self.players}
         self.player = self.players[0]
         self.player_id = self.player.id
         self.npcs = self.players[1:] if self.config.play_mode != "simulation" else []
@@ -57,9 +59,10 @@ class Game:
         self.events = EventLog(self.config.event_history)
         self.messages: deque[str] = deque(maxlen=5)
         self.chat = ChatSystem(self.config.chat_history, self.config.chat_max_length)
-        self.tasks = TaskSystem(self)
+        self.tasks = TaskSystem({actor.id: TaskSystem.assign(self) if actor.role == "crew" else []
+                                 for actor in self.players})
         self.vents = VentSystem()
-        self.sabotage = SabotageSystem(self)
+        self.sabotage = SabotageSystem(self.config.initial_sabotage_cooldown)
         self.doors = DoorSystem(self.config.initial_door_cooldown)
         self.npc_system = NPCSystem() if self.config.play_mode == "game" and not self.test_mode else None
         self.meetings = MeetingSystem()
@@ -119,12 +122,12 @@ class Game:
 
     @property
     def kill_cooldown(self) -> float:
-        return min((self.entity(i).kill_clock for i in self.impostor_ids), default=0.0)
+        return min((self.get_player(i).kill_clock for i in self.impostor_ids), default=0.0)
 
     @kill_cooldown.setter
     def kill_cooldown(self, value: float) -> None:
         for actor_id in self.impostor_ids:
-            self.entity(actor_id).kill_clock = value
+            self.get_player(actor_id).kill_clock = value
 
     @property
     def emergency_available(self) -> bool:
@@ -146,13 +149,10 @@ class Game:
     def distance(a: Pos, b: Pos) -> int:
         return manhattan(a, b)
 
-    def entity(self, entity_id: str) -> Player:
-        if entity_id not in self._entities:
-            raise ValueError(f"Unknown player ID: {entity_id!r}")
-        return self._entities[entity_id]
-
-    def npc(self, npc_id: str) -> Player:
-        return self.entity(npc_id)
+    def get_player(self, player_id: str) -> Player:
+        if player_id not in self._players_by_id:
+            raise ValueError(f"Unknown player ID: {player_id!r}")
+        return self._players_by_id[player_id]
 
     def alive_npcs(self) -> list[Player]:
         return [actor for actor in self.npcs if actor.alive]
@@ -160,11 +160,11 @@ class Game:
     def alive_ids(self) -> list[str]:
         return [actor.id for actor in self.players if actor.alive]
 
-    def name_of(self, entity_id: str) -> str:
-        return self.entity(entity_id).name
+    def name_of(self, player_id: str) -> str:
+        return self.get_player(player_id).name
 
-    def pos_of(self, entity_id: str) -> Pos:
-        return self.entity(entity_id).pos
+    def pos_of(self, player_id: str) -> Pos:
+        return self.get_player(player_id).pos
 
     def is_walkable(self, pos: Pos) -> bool:
         return self.world.is_walkable(pos)
@@ -187,8 +187,8 @@ class Game:
             return self.config.player_move_seconds
         return self.config.impostor_move_seconds if actor.role == "impostor" else self.config.crew_move_seconds
 
-    def move_entity(self, player_id: str, dx: int, dy: int) -> bool:
-        actor = self.entity(player_id)
+    def move(self, player_id: str, dx: int, dy: int) -> bool:
+        actor = self.get_player(player_id)
         if (not actor.alive or actor.vent_id is not None or self.outcome or self.pending_meeting
                 or abs(dx) + abs(dy) != 1):
             return False
@@ -204,23 +204,21 @@ class Game:
         return True
 
     def move_player(self, dx: int, dy: int) -> bool:
-        return self.move_entity(self.player_id, dx, dy)
+        return self.move(self.player_id, dx, dy)
 
-    def interact_entity(self, player_id: str) -> bool:
-        if (self.outcome or self.pending_meeting or not self.entity(player_id).alive
-                or self.entity(player_id).vent_id is not None):
+    def interact(self, player_id: Optional[str] = None) -> bool:
+        """Repair, start a task or press the button; defaults to the local player."""
+        actor = self.get_player(player_id or self.player_id)
+        if self.outcome or self.pending_meeting or not actor.alive or actor.vent_id is not None:
             return False
-        return (self.sabotage.interact(self, player_id)
-                or self.tasks.start(self, player_id) or self.call_emergency(player_id))
-
-    def interact(self) -> bool:
-        return self.interact_entity(self.player_id)
+        return (self.sabotage.interact(self, actor.id)
+                or self.tasks.start(self, actor.id) or self.call_emergency(actor.id))
 
     def cancel_task(self, reason: str = "") -> None:
         self.tasks.cancel(self, self.player_id, reason)
 
     def call_emergency(self, player_id: str) -> bool:
-        actor = self.entity(player_id)
+        actor = self.get_player(player_id)
         if actor.vent_id is not None or actor.emergencies_left <= 0 or manhattan(actor.pos, EMERGENCY_POS) > 1:
             return False
         if self.meetings.call(self, player_id):
@@ -229,7 +227,7 @@ class Game:
         return False
 
     def report_body(self, player_id: str, automatic: bool = False) -> bool:
-        actor = self.entity(player_id)
+        actor = self.get_player(player_id)
         if actor.vent_id is not None:
             return False
         for body in self.bodies:
@@ -243,7 +241,7 @@ class Game:
 
     def apply_action(self, player_id: str, action: Action | str | dict) -> bool:
         action = Action.parse(action)
-        actor = self.entity(player_id)
+        actor = self.get_player(player_id)
         if action.kind == "wait":
             return True
         if not actor.alive or self.outcome:
@@ -261,14 +259,14 @@ class Game:
         if action.kind == "vent":
             return self.vents.use(self, player_id, action.target)
         if action.kind in MOVE_ACTIONS:
-            if actor.move_clock > 1e-9:
+            if actor.move_clock > EPSILON:
                 return False
-            moved = self.move_entity(player_id, *MOVE_ACTIONS[action.kind])
+            moved = self.move(player_id, *MOVE_ACTIONS[action.kind])
             if moved:
                 actor.move_clock = self.move_interval(actor)
             return moved
         if action.kind == "interact":
-            return self.interact_entity(player_id)
+            return self.interact(player_id)
         if action.kind == "emergency":
             return self.call_emergency(player_id)
         if action.kind == "report":
@@ -284,8 +282,8 @@ class Game:
             self.meetings.tick(self, dt)
             return
         remaining = dt
-        while remaining > 1e-9 and not self.outcome and not self.pending_meeting:
-            step = min(remaining, 0.05)
+        while remaining > EPSILON and not self.outcome and not self.pending_meeting:
+            step = min(remaining, TICK_STEP)
             remaining -= step
             self.elapsed += step
             for actor in self.players:
@@ -318,9 +316,9 @@ class Game:
         return self.world.find_path(start, goal)
 
     def kill(self, attacker_id: str, target_id: Optional[str] = None) -> bool:
-        attacker = self.entity(attacker_id)
+        attacker = self.get_player(attacker_id)
         if (not self.config.kills_enabled or self.outcome or self.pending_meeting or not attacker.alive
-                or attacker.vent_id is not None or attacker.role != "impostor" or attacker.kill_clock > 1e-9):
+                or attacker.vent_id is not None or attacker.role != "impostor" or attacker.kill_clock > EPSILON):
             return False
         candidates = [actor for actor in self.players if actor.alive and actor.role == "crew"
                       and (target_id is None or actor.id == target_id)
@@ -340,8 +338,8 @@ class Game:
         self.tasks.cancel(self, victim.id)
         attacker.kill_clock = self.config.kill_cooldown
         for witness_id in witnesses:
-            witness = self.entity(witness_id)
-            witness.suspicion[attacker_id] = witness.suspicion.get(attacker_id, 0) + 8.0
+            witness = self.get_player(witness_id)
+            witness.suspicion[attacker_id] = witness.suspicion.get(attacker_id, 0) + WITNESS_SUSPICION
         self.emit("player_killed", f"{attacker.name} eliminated {victim.name}.",
                   actor=attacker_id, target=victim.id, data={"position": list(victim.pos)},
                   visible_to=[attacker_id, victim.id, *witnesses])
@@ -366,7 +364,7 @@ class Game:
 
     def set_role(self, player_id: str, role: str) -> None:
         """Test mode: switch a player between crew and impostor on the spot."""
-        actor = self.entity(player_id)
+        actor = self.get_player(player_id)
         if role not in ("crew", "impostor") or actor.role == role:
             return
         self.tasks.cancel(self, player_id)
@@ -430,17 +428,17 @@ class Game:
 
     def vision_radius(self, player_id: str) -> int:
         """Lights sabotage dims crew sight only; impostors keep full vision."""
-        if self.sabotage.kind == "lights" and self.entity(player_id).role == "crew":
+        if self.sabotage.kind == "lights" and self.get_player(player_id).role == "crew":
             return min(self.config.vision_radius, self.config.lights_vision_radius)
         return self.config.vision_radius
 
     def can_see(self, player_id: str, pos: Pos) -> bool:
-        actor = self.entity(player_id)
+        actor = self.get_player(player_id)
         return (actor.alive and actor.vent_id is None
                 and self.has_line_of_sight(actor.pos, pos, self.vision_radius(player_id)))
 
     def visible_positions(self, player_id: Optional[str] = None) -> set[Pos]:
-        actor = self.entity(player_id or self.player_id)
+        actor = self.get_player(player_id or self.player_id)
         visible: set[Pos] = set()
         # A vented impostor still looks out through the grate; can_see stays false,
         # so NPC logic and kill witnesses are unaffected.

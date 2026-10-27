@@ -71,10 +71,10 @@ class VentTests(unittest.TestCase):
         self.assertFalse(self.game.occupied(self.actor.pos))
         other = self.game.npcs[0]
         other.pos = (29, 20)
-        self.assertTrue(self.game.move_entity(other.id, -1, 0))
+        self.assertTrue(self.game.move(other.id, -1, 0))
         self.assertFalse(self.use())
         self.assertEqual(self.actor.vent_id, "medbay")
-        self.assertTrue(self.game.move_entity(other.id, 1, 0))
+        self.assertTrue(self.game.move(other.id, 1, 0))
         self.assertTrue(self.use())
         self.assertTrue(self.game.occupied(self.actor.pos))
 

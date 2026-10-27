@@ -2,6 +2,7 @@
 from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional
+from .models import EPSILON
 from .world import DOORS, Door
 
 if TYPE_CHECKING:
@@ -33,18 +34,18 @@ class DoorSystem:
 
     def refusal(self, game: "Game", actor_id: str, room_id: Optional[str]) -> Optional[str]:
         """Why this room cannot be locked right now, or None if it can."""
-        actor = game.entity(actor_id)
+        actor = game.get_player(actor_id)
         if room_id not in DOOR_ROOMS:
             return "Unknown room."
         if game.outcome or game.pending_meeting or not actor.alive or actor.role != "impostor":
             return "Only a living impostor can close doors."
         if game.sabotage.kind:
             return "Doors cannot be closed during a sabotage."
-        if self.initial_cooldown > 1e-9:
-            return f"Doors ready in {math.ceil(self.initial_cooldown - 1e-9)}s."
+        if self.initial_cooldown > EPSILON:
+            return f"Doors ready in {math.ceil(self.initial_cooldown - EPSILON)}s."
         if room_id in self.closed:
             return f"{DOOR_ROOMS[room_id]} doors are already closed."
-        if self.cooldowns.get(room_id, 0.0) > 1e-9:
+        if self.cooldowns.get(room_id, 0.0) > EPSILON:
             return f"{DOOR_ROOMS[room_id]} doors recharge in {self.cooldowns[room_id]:.0f}s."
         limit = game.config.max_closed_rooms
         if self.closed_count >= limit:
@@ -82,5 +83,5 @@ class DoorSystem:
             self.cooldowns[room_id] = max(0.0, self.cooldowns[room_id] - dt)
         for room_id in list(self.closed):
             self.closed[room_id] -= dt
-            if self.closed[room_id] <= 1e-9:
+            if self.closed[room_id] <= EPSILON:
                 self.reopen(game, room_id)

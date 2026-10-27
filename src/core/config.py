@@ -1,21 +1,38 @@
 """Validated game settings, loaded from JSON or constructed in Python."""
 from __future__ import annotations
 import json
-from typing import Optional
 import math
 from dataclasses import asdict, dataclass, fields
+from functools import cache
 from pathlib import Path
+from typing import Optional, get_type_hints
 from .models import COLORS
+from .world import TASK_POSITIONS
 
 
 # Interactive setup ranges; GameConfig itself accepts smaller rosters and longer cooldowns.
 MENU_LIMITS = {
     "player_count": (4, len(COLORS)),
     "kill_cooldown": (0, 60),
-    "tasks_per_player": (0, 24),
+    "tasks_per_player": (0, len(TASK_POSITIONS)),
     "discussion_seconds": (0, 120),
     "voting_seconds": (5, 120),
 }
+
+# Each field is type-checked from its annotation; floats also accept ints, never booleans.
+TYPE_CHECKS = {
+    bool: lambda value: type(value) is bool,
+    int: lambda value: type(value) is int,
+    Optional[int]: lambda value: value is None or type(value) is int,
+    float: lambda value: type(value) in (int, float) and math.isfinite(value),
+    str: lambda value: isinstance(value, str),
+}
+
+
+@cache
+def field_types() -> dict[str, object]:
+    """Resolved GameConfig annotations, computed once instead of on every instance."""
+    return get_type_hints(GameConfig)
 
 
 @dataclass(frozen=True)
@@ -66,28 +83,15 @@ class GameConfig:
     fps: int = 15
 
     def __post_init__(self) -> None:
-        integers = {"seed", "player_count", "impostor_count", "tasks_per_player", "vision_radius", "lights_vision_radius",
-                    "kill_radius", "emergencies_per_player", "event_history", "fps", "max_closed_rooms",
-                    "chat_history", "chat_max_length"}
-        booleans = {"meetings_enabled", "kills_enabled", "npc_ai_enabled", "end_on_player_death", "sabotage_enabled",
-                    "test_mode", "allow_god_view"}
-        strings = {"play_mode", "player_color", "player_role", "task_win_mode"}
+        hints = field_types()
         for field in fields(self):
-            value = getattr(self, field.name)
-            if field.name == "seed" and value is None:
-                valid = True
-            elif field.name in integers:
-                valid = type(value) is int
-            elif field.name in booleans:
-                valid = type(value) is bool
-            elif field.name in strings:
-                valid = isinstance(value, str)
-            else:
-                valid = type(value) in (int, float) and math.isfinite(value)
-            if not valid:
+            check = TYPE_CHECKS.get(hints[field.name])
+            if check is None:
+                raise TypeError(f"GameConfig.{field.name} has an unsupported annotation: {hints[field.name]!r}")
+            if not check(getattr(self, field.name)):
                 raise ValueError(f"Invalid type or non-finite value for {field.name}")
         if not 1 <= self.player_count <= len(COLORS):
-            raise ValueError("player_count must be between 1 and 12")
+            raise ValueError(f"player_count must be between 1 and {len(COLORS)}")
         if self.play_mode not in {"game", "simulation"}:
             raise ValueError("play_mode must be game or simulation")
         if not 0 <= self.impostor_count < self.player_count:
@@ -100,8 +104,8 @@ class GameConfig:
             raise ValueError("player_role must be crew, impostor, or random")
         if self.player_role == "impostor" and not self.impostor_count:
             raise ValueError("An impostor player requires at least one impostor")
-        if not 0 <= self.tasks_per_player <= 24:
-            raise ValueError("tasks_per_player must be between 0 and 24")
+        if not 0 <= self.tasks_per_player <= len(TASK_POSITIONS):
+            raise ValueError(f"tasks_per_player must be between 0 and {len(TASK_POSITIONS)}")
         if self.task_win_mode not in {"player", "team", "disabled"}:
             raise ValueError("task_win_mode must be player, team, or disabled")
         for name in ("task_seconds", "crew_move_seconds", "impostor_move_seconds", "player_move_seconds",

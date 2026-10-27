@@ -1,9 +1,11 @@
-"""Shared, terminal-independent entity and action data."""
+"""Shared, terminal-independent player and action data."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
 Pos = tuple[int, int]
+EPSILON = 1e-9  # Float tolerance for timers, cooldowns and progress.
+WITNESS_SUSPICION = 8.0  # Added by a witness who sees a kill or a vent.
 
 
 @dataclass(frozen=True)
